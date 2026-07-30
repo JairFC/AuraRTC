@@ -10,6 +10,35 @@ export class MicManager {
     constructor(ipc: IIPCAdapter) {
         this.ipc = ipc;
         
+        // --- VISUAL DEBUGGER ---
+        const debugBox = document.createElement('div');
+        debugBox.style.position = 'fixed';
+        debugBox.style.bottom = '10px';
+        debugBox.style.left = '10px';
+        debugBox.style.width = '400px';
+        debugBox.style.height = '200px';
+        debugBox.style.overflowY = 'auto';
+        debugBox.style.background = 'rgba(0,0,0,0.8)';
+        debugBox.style.color = '#0f0';
+        debugBox.style.zIndex = '999999';
+        debugBox.style.fontFamily = 'monospace';
+        debugBox.style.fontSize = '12px';
+        debugBox.style.padding = '10px';
+        debugBox.style.pointerEvents = 'none';
+        debugBox.id = 'aura-debug-box';
+        if (document.body) document.body.appendChild(debugBox);
+        else window.addEventListener('DOMContentLoaded', () => document.body.appendChild(debugBox));
+        
+        (window as any).rawLog = (msg: string) => {
+            console.log(msg);
+            const box = document.getElementById('aura-debug-box');
+            if (box) {
+                box.innerHTML += `<div>${msg}</div>`;
+                box.scrollTop = box.scrollHeight;
+            }
+        };
+        // ------------------------
+
         if (navigator.mediaDevices) {
             navigator.mediaDevices.addEventListener('devicechange', () => this.refreshMicList());
             // Slight delay to allow page loading
@@ -43,14 +72,14 @@ export class MicManager {
             if (audioMics.length > 0 && !audioMics[0].label) {
                 if (!this.permissionRequested) {
                     this.permissionRequested = true;
-                    console.log("[MicManager] Requesting permissions proactively...");
+                    (window as any).rawLog("[MicManager] Requesting permissions proactively...");
                     try {
                         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        console.log("[MicManager] Permissions granted.");
+                        (window as any).rawLog("[MicManager] Permissions granted.");
                         stream.getTracks().forEach(t => t.stop());
                         this.refreshMicList(); // Try again
                     } catch (e: any) {
-                        console.error("[MicManager] Permission denied: " + e.message);
+                        (window as any).rawLog("[MicManager] Permission denied: " + e.message);
                     }
                 }
                 return;
@@ -80,12 +109,12 @@ export class MicManager {
             }
 
             const micLabels = uniqueMics.map(m => m.label || "Micrófono Desconocido");
-            console.log(`[MicManager] Emitting ${micLabels.length} mics to tray.`);
+            (window as any).rawLog(`[MicManager] Emitting ${micLabels.length} mics to tray.`);
             this.ipc.invoke('update_mics_cmd', { payload: { mics: micLabels, selectedIdx: this.selectedMicIdx } })
-                .catch(e => console.error("[MicManager] Failed to invoke update_mics_cmd:", e));
+                .catch((e: any) => (window as any).rawLog("[MicManager] Failed to invoke update_mics_cmd: " + e));
 
         } catch (e) {
-            console.error("[MicManager] Failed to enumerate devices", e);
+            (window as any).rawLog("[MicManager] Failed to enumerate devices: " + e);
         }
     }
 }
