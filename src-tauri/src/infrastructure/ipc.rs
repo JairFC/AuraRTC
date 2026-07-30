@@ -1,5 +1,6 @@
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use crate::domain::config::{self, AuraConfig};
+use crate::infrastructure::tray::{update_mics_internal, UpdateMicsPayload};
 
 // The injector bundle is compiled into the binary at build time.
 // Only the config JSON prefix changes at runtime.
@@ -108,3 +109,10 @@ pub async fn apply_config(app: tauri::AppHandle, config_data: AuraConfig) -> Res
 
     Ok(())
 }
+
+#[tauri::command]
+pub async fn update_mics_cmd(app: tauri::AppHandle, payload: UpdateMicsPayload) -> Result<(), String> {
+    update_mics_internal(app, payload);
+    Ok(())
+}
+

@@ -81,7 +81,8 @@ export class MicManager {
 
             const micLabels = uniqueMics.map(m => m.label || "Micrófono Desconocido");
             console.log(`[MicManager] Emitting ${micLabels.length} mics to tray.`);
-            this.ipc.emit('update_mics_event', { mics: micLabels, selectedIdx: this.selectedMicIdx });
+            this.ipc.invoke('update_mics_cmd', { payload: { mics: micLabels, selectedIdx: this.selectedMicIdx } })
+                .catch(e => console.error("[MicManager] Failed to invoke update_mics_cmd:", e));
 
         } catch (e) {
             console.error("[MicManager] Failed to enumerate devices", e);

@@ -1,21 +1,19 @@
 pub mod domain;
 pub mod infrastructure;
 
-use std::sync::Mutex;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, Listener};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use domain::config::{load_config, save_config};
 use domain::state::{AppState, AppStateWrapper};
-use infrastructure::tray::{build_tray, update_mics_internal, UpdateMicsPayload};
-use infrastructure::ipc::{logdom, resizeorb, get_config, save_config_cmd, get_config_path_cmd, apply_config, build_init_script};
-
+use infrastructure::tray::build_tray;
+use infrastructure::ipc::{logdom, resizeorb, get_config, save_config_cmd, get_config_path_cmd, apply_config, build_init_script, update_mics_cmd};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![resizeorb, logdom, get_config, save_config_cmd, get_config_path_cmd, apply_config])
+        .invoke_handler(tauri::generate_handler![resizeorb, logdom, get_config, save_config_cmd, get_config_path_cmd, apply_config, update_mics_cmd])
         .setup(|app| {
             // 1. Inicializar Estado
-            app.manage(AppStateWrapper(Mutex::new(AppState::default())));
+            app.manage(AppStateWrapper(std::sync::Mutex::new(AppState::default())));
 
             // 2. Cargar Configuración (crear archivo si es la primera vez)
             let config = load_config(app.handle());
@@ -24,17 +22,6 @@ pub fn run() {
                 save_config(app.handle(), &config);
                 println!("[AuraRTC] First run detected. Edit aurartc.json to configure your target site.");
             }
-
-            // 3. Registrar Listeners de Rust (Eventos IPC Web -> Rust)
-            let app_handle_mics = app.handle().clone();
-            app.listen_any("update_mics_event", move |event| {
-                let payload_str = event.payload();
-                if let Ok(payload) = serde_json::from_str::<UpdateMicsPayload>(payload_str) {
-                    update_mics_internal(app_handle_mics.clone(), payload);
-                } else {
-                    println!("[AuraRTC] Failed to parse update_mics_event payload.");
-                }
-            });
 
             // 4. Build injector bundle with config injected at the front
             let init_script = build_init_script(&config);
