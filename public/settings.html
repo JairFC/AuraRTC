@@ -313,11 +313,11 @@
 
   <!-- Actions -->
   <div class="actions">
-    <button class="btn-secondary" id="btnOpenFile">📂 Open JSON File</button>
-    <div>
-      <button class="btn-secondary" id="btnReload" style="margin-right: 8px;">↻ Reload</button>
-      <button class="btn-save" id="btnSave">💾 Save & Restart</button>
-    </div>
+      <button class="btn-secondary" id="btnOpenFile">📂 Open JSON File</button>
+      <div>
+        <button class="btn-secondary" id="btnSaveOnly" style="margin-right: 8px;">💾 Save Only</button>
+        <button class="btn-save" id="btnApply">⚡ Save & Apply</button>
+      </div>
   </div>
 
   <div class="status" id="status"></div>
@@ -366,8 +366,39 @@
       }
     }
 
-    async function saveConfig() {
-      const config = {
+    async function saveOnly() {
+      const config = buildConfig();
+      try {
+        await invoke('save_config_cmd', { configData: config });
+        showStatus('✅ Config saved to disk. Click "Save & Apply" to activate.', 'success');
+      } catch (e) {
+        showStatus('Failed to save: ' + e, 'error');
+      }
+    }
+
+    async function applyConfig() {
+      const config = buildConfig();
+      // Validate URL
+      try { new URL(config.target_url); } catch {
+        showStatus('❌ Invalid URL. Example: https://your-voice-app.com', 'error');
+        return;
+      }
+      const btn = document.getElementById('btnApply');
+      btn.textContent = '⏳ Applying...';
+      btn.disabled = true;
+      try {
+        await invoke('apply_config', { configData: config });
+        showStatus('✅ Applied! Main window is reloading with the new config.', 'success');
+      } catch (e) {
+        showStatus('Failed to apply: ' + e, 'error');
+      } finally {
+        btn.textContent = '⚡ Save & Apply';
+        btn.disabled = false;
+      }
+    }
+
+    function buildConfig() {
+      return {
         site_name: el.siteName.value || 'My Voice App',
         target_url: el.targetUrl.value || 'https://example.com',
         auto_call_enabled: el.autoCall.checked,
@@ -383,24 +414,17 @@
           analysis_interval_ms: parseInt(el.vadInterval.value) || 30,
         },
       };
-
-      try {
-        await invoke('save_config_cmd', { configData: config });
-        showStatus('✅ Config saved! Restart AuraRTC to apply changes.', 'success');
-      } catch (e) {
-        showStatus('Failed to save: ' + e, 'error');
-      }
     }
 
     async function openConfigFile() {
       try {
         const path = await invoke('get_config_path_cmd');
-        // Use the opener plugin to open the file in default editor
         window.__TAURI__.opener.openPath(path);
       } catch (e) {
         showStatus('Could not open file: ' + e, 'error');
       }
     }
+
 
     function showStatus(msg, type) {
       el.status.textContent = msg;
@@ -410,8 +434,9 @@
       }
     }
 
-    document.getElementById('btnSave').addEventListener('click', saveConfig);
-    document.getElementById('btnReload').addEventListener('click', loadConfig);
+    document.getElementById('btnApply').addEventListener('click', applyConfig);
+    document.getElementById('btnSaveOnly').addEventListener('click', saveOnly);
+    document.getElementById('btnReload') && document.getElementById('btnReload').addEventListener('click', loadConfig);
     document.getElementById('btnOpenFile').addEventListener('click', openConfigFile);
 
     // Load on start

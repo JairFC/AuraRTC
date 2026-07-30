@@ -6,13 +6,13 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, Listener};
 use domain::config::{load_config, save_config};
 use domain::state::{AppState, AppStateWrapper};
 use infrastructure::tray::{build_tray, update_mics_internal, UpdateMicsPayload};
-use infrastructure::ipc::{logdom, resizeorb, get_config, save_config_cmd, get_config_path_cmd};
+use infrastructure::ipc::{logdom, resizeorb, get_config, save_config_cmd, get_config_path_cmd, apply_config, build_init_script};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![resizeorb, logdom, get_config, save_config_cmd, get_config_path_cmd])
+        .invoke_handler(tauri::generate_handler![resizeorb, logdom, get_config, save_config_cmd, get_config_path_cmd, apply_config])
         .setup(|app| {
             // 1. Inicializar Estado
             app.manage(AppStateWrapper(Mutex::new(AppState::default())));
@@ -36,12 +36,8 @@ pub fn run() {
                 }
             });
 
-            // 4. Construir el Bundle Inyector
-            let init_script = format!(
-                "window.__AURARTC_CONFIG__ = {};\n{}",
-                serde_json::to_string(&config).unwrap_or_else(|_| "{}".to_string()),
-                include_str!("injector.bundle.js")
-            );
+            // 4. Build injector bundle with config injected at the front
+            let init_script = build_init_script(&config);
 
             // 5. Instanciar Ventana Principal
             let window_title = format!("AuraRTC — {}", config.site_name);
