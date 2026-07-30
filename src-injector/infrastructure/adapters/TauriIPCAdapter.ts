@@ -2,8 +2,14 @@ import { IIPCAdapter } from "../../domain/ports/IIPCAdapter";
 
 export class TauriIPCAdapter implements IIPCAdapter {
     emit(event: string, payload: any): void {
-        if ((window as any).__TAURI__ && (window as any).__TAURI__.event) {
-            (window as any).__TAURI__.event.emit(event, payload).catch((e: any) => console.error(e));
+        const tauri = (window as any).__TAURI__;
+        if (tauri && tauri.event && typeof tauri.event.emit === 'function') {
+            tauri.event.emit(event, payload).catch((e: any) => console.error('[AuraRTC] emit error', e));
+        } else {
+            // The injector runs inside the remote window (main). If __TAURI__.event
+            // is missing here, no event ever reaches the backend / orb.
+            console.warn(`[AuraRTC] emit('${event}') dropped — window.__TAURI__.event is unavailable`,
+                tauri ? '(has __TAURI__, missing .event)' : '(no __TAURI__ global)');
         }
     }
 

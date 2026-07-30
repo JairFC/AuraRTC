@@ -6,13 +6,20 @@ import { AppConfig, emptyConfig } from "./domain/models/AppConfig";
 import { CallStatus } from "./domain/models/CallStatus";
 
 (function() {
-    // 1. CORS / Iframe check
-    if (window.self !== window.top && !navigator.mediaDevices) {
-        console.warn("[AuraRTC] Sub-frame sin acceso a mediaDevices. Abortando inyección.");
+    // 1. Only run in the TOP frame. Sesame embeds Google recaptcha/analytics
+    // iframes whose origin differs (google.com, null) — injecting there causes
+    // duplicate "INJECTOR ALIVE" logs, stray clicks, and crashes inside those
+    // frames. All audio/DOM control belongs to the top-level document.
+    if (window.self !== window.top) {
         return;
     }
 
     console.log("=== AURARTC INJECTOR ALIVE ===");
+    // One-shot diagnostic: report whether the Tauri event bus is reachable from
+    // this (possibly remote-origin) window. If this logs "MISSING", the orb will
+    // never react because no event leaves this window.
+    const __t = (window as any).__TAURI__;
+    console.log(`[AuraRTC] event bus: ${__t && __t.event ? 'REACHABLE' : 'MISSING'} (origin=${location.origin})`);
 
     // 2. Configuration — injected by Tauri, fallback to generic defaults
     const config: AppConfig = (window as any).__AURARTC_CONFIG__
@@ -28,7 +35,7 @@ import { CallStatus } from "./domain/models/CallStatus";
     // 4. State
     let state = CallStatus.DISCONNECTED;
 
-    // 5. Voice Activity Detection (VAD)
+    // 5. Voice Activity Detection (VAD) — local microphone
     webrtc.onVoiceActivity(() => {
         ipc.emit('user-speaking', {});
     });
@@ -38,6 +45,16 @@ import { CallStatus } from "./domain/models/CallStatus";
     webrtc.hookGetUserMedia((stream) => {
         webrtc.startAnalysis(stream);
     });
+
+    // 5b. Remote (incoming WebRTC) VAD — drives the orb's "remote speaking" state.
+    // Site-agnostic: taps RTCPeerConnection inbound tracks + <audio>/<video>.
+    webrtc.onRemoteVoiceActivity(() => {
+        ipc.emit('remote-speaking', {});
+    });
+    webrtc.onRemoteSilence(() => {
+        ipc.emit('remote-silent', {});
+    });
+    webrtc.hookRemoteAudio();
 
     // 6. DOM Watchdog Orchestrator — uses configurable selectors
     dom.startWatching(() => {

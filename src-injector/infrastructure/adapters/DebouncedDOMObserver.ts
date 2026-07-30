@@ -6,11 +6,15 @@ export class DebouncedDOMObserver implements IDOMClicker {
     private throttleTimer: number | null = null;
     private lastClickTime: number = 0;
     private readonly THROTTLE_MS = 1000;
+    // Short anti-double-click guard only. Keeping this low lets the proactive
+    // scans (1s/3s/5s/8s in startWatching) retry the connect button when the
+    // first click didn't result in a call (state is owned by main.ts).
+    private readonly CLICK_COOLDOWN_MS = 600;
 
     public findAndClick(selectors: string[]): boolean {
         const now = Date.now();
-        if (now - this.lastClickTime < 1500) return false;
-        
+        if (now - this.lastClickTime < this.CLICK_COOLDOWN_MS) return false;
+
         const el = this.findElement(selectors);
         if (el) {
             this.executeClick(el);
@@ -85,7 +89,7 @@ export class DebouncedDOMObserver implements IDOMClicker {
         if (this.observer) return;
 
         this.observer = new MutationObserver((mutations) => {
-            const isSelfMutation = mutations.every(m => 
+            const isSelfMutation = mutations.every(m =>
                 (m.target as HTMLElement).id === 'aurartc-debug-overlay' ||
                 ((m.target as HTMLElement).closest && (m.target as HTMLElement).closest('#aurartc-debug-overlay'))
             );
@@ -94,20 +98,34 @@ export class DebouncedDOMObserver implements IDOMClicker {
             this.isDirty = true;
         });
 
-        this.observer.observe(document.body, { childList: true, subtree: true });
-
-        this.throttleTimer = window.setInterval(() => {
-            if (this.isDirty) {
-                this.isDirty = false;
-                onMutated();
+        // IMPORTANT: this script is injected as an initialization_script, which can
+        // run BEFORE document.body exists (seen on Sesame: "observe parameter 1 is
+        // not of type Node"). If observe() throws, the throttle timer + proactive
+        // scans below never register and the whole auto-call/orb pipeline dies.
+        const start = () => {
+            if (!document.body) {
+                // body not ready yet — retry on the next tick
+                window.setTimeout(start, 50);
+                return;
             }
-        }, this.THROTTLE_MS);
+            this.observer!.observe(document.body, { childList: true, subtree: true });
 
-        // Initial proactive scans: catches buttons already in DOM on load (no mutation fires).
-        // SPA pages like Sesame may render content before mutations start.
-        [1000, 3000, 5000, 8000].forEach(delay => {
-            setTimeout(() => { this.isDirty = true; }, delay);
-        });
+            this.throttleTimer = window.setInterval(() => {
+                if (this.isDirty) {
+                    this.isDirty = false;
+                    onMutated();
+                }
+            }, this.THROTTLE_MS);
+
+            // Initial proactive scans: catches buttons already in DOM on load (no mutation fires).
+            // SPA pages like Sesame may render content before mutations start.
+            [1000, 3000, 5000, 8000].forEach(delay => {
+                setTimeout(() => { this.isDirty = true; }, delay);
+            });
+            // Kick an immediate scan too.
+            this.isDirty = true;
+        };
+        start();
     }
 
     public stopWatching(): void {

@@ -32,3 +32,6 @@ cargo_error.log
 *.njsproj
 *.sln
 *.sw?
+
+# ZCode client config
+.zcode/
