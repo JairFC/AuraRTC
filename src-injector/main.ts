@@ -1,6 +1,7 @@
 import { TauriIPCAdapter } from "./infrastructure/adapters/TauriIPCAdapter";
 import { DebouncedDOMObserver } from "./infrastructure/adapters/DebouncedDOMObserver";
 import { WebRTCMonkeyPatch } from "./infrastructure/adapters/WebRTCMonkeyPatch";
+import { MicManager } from "./infrastructure/adapters/MicManager";
 import { AppConfig, emptyConfig } from "./domain/models/AppConfig";
 import { CallStatus } from "./domain/models/CallStatus";
 
@@ -18,10 +19,11 @@ import { CallStatus } from "./domain/models/CallStatus";
         ? { ...emptyConfig(), ...(window as any).__AURARTC_CONFIG__ }
         : emptyConfig();
 
-    // 3. Dependencies (pass VAD config to WebRTC adapter)
+    // 3. Dependencies
     const ipc = new TauriIPCAdapter();
     const dom = new DebouncedDOMObserver();
-    const webrtc = new WebRTCMonkeyPatch(config.vad);
+    const micManager = new MicManager(ipc);
+    const webrtc = new WebRTCMonkeyPatch(micManager, config.vad);
 
     // 4. State
     let state = CallStatus.DISCONNECTED;

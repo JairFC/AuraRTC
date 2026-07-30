@@ -1,5 +1,6 @@
 import { IAudioAnalyzer } from "../../domain/ports/IAudioAnalyzer";
 import { VadConfig } from "../../domain/models/AppConfig";
+import { MicManager } from "./MicManager";
 
 export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     private audioCtx: AudioContext | null = null;
@@ -12,8 +13,10 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     private analysisInterval: number | null = null;
     private isSpeaking: boolean = false;
     private vadConfig: VadConfig;
+    private micManager: MicManager;
 
-    constructor(vadConfig?: VadConfig) {
+    constructor(micManager: MicManager, vadConfig?: VadConfig) {
+        this.micManager = micManager;
         this.vadConfig = vadConfig || {
             noise_floor_max: 40.0,
             speaking_threshold: 12.0,
@@ -113,12 +116,28 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
         
         const origGetUserMedia = navigator.mediaDevices.getUserMedia;
         navigator.mediaDevices.getUserMedia = async (constraints) => {
+            console.log("[AuraRTC] Intercepted getUserMedia call!");
+            
+            const preferredMicId = this.micManager.getPreferredMicId();
+            if (constraints && constraints.audio && preferredMicId) {
+                console.log(`[AuraRTC] Overriding request with preferred Mic: ${preferredMicId}`);
+                if (typeof constraints.audio === 'object') {
+                    constraints.audio.deviceId = { exact: preferredMicId };
+                } else {
+                    constraints.audio = { deviceId: { exact: preferredMicId } };
+                }
+            }
+
             const stream = await origGetUserMedia.call(navigator.mediaDevices, constraints);
             
             // Bypass autoplay policy natively because user clicked to allow mic
             this.getOrCreateAudioContext();
             
             onStreamAcquired(stream);
+            
+            // Sync mic list since we just got fresh permissions
+            this.micManager.refreshMicList();
+            
             return stream;
         };
     }
