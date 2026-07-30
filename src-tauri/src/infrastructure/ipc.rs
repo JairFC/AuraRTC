@@ -1,4 +1,5 @@
 use tauri::Manager;
+use crate::domain::config::{self, AuraConfig};
 
 #[tauri::command]
 pub async fn resizeorb(app: tauri::AppHandle, size: f64) -> Result<(), String> {
@@ -13,10 +14,27 @@ pub async fn resizeorb(app: tauri::AppHandle, size: f64) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn logdom(app: tauri::AppHandle, dom: String) -> Result<(), String> {
-    let path = crate::domain::config::get_config_path(&app).with_file_name("aurartc_dom.html");
+    let path = config::get_config_path(&app).with_file_name("aurartc_dom.html");
     std::thread::spawn(move || {
         let _ = std::fs::write(path, dom);
-        println!("[AuraRTC] Recibido DOM de la página para depurar.");
+        println!("[AuraRTC] DOM snapshot saved for debugging.");
     });
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_config(app: tauri::AppHandle) -> Result<AuraConfig, String> {
+    Ok(config::load_config(&app))
+}
+
+#[tauri::command]
+pub async fn save_config_cmd(app: tauri::AppHandle, config_data: AuraConfig) -> Result<(), String> {
+    config::save_config(&app, &config_data);
+    println!("[AuraRTC] Config saved. Restart to apply changes.");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_config_path_cmd(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(config::get_config_path(&app).to_string_lossy().to_string())
 }

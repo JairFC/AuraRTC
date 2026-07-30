@@ -1,7 +1,7 @@
 use tauri::{
     menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, Emitter,
+    Manager, Emitter, WebviewUrl, WebviewWindowBuilder,
 };
 use crate::domain::config::{load_config, save_config, AuraConfig};
 use crate::domain::state::AppStateWrapper;
@@ -22,6 +22,7 @@ pub fn build_tray(app: &tauri::AppHandle, config: &AuraConfig) -> Result<(), Box
         .checked(config.auto_call_enabled)
         .build(app)?;
     let quit_i = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+    let settings_i = MenuItemBuilder::with_id("settings", "⚙️ Settings").build(app)?;
 
     let mic_submenu = SubmenuBuilder::new(app, "🎙️ Micrófono");
     let item = MenuItemBuilder::with_id("mic_loading", "Buscando... (Requiere permisos)").enabled(false).build(app)?;
@@ -33,6 +34,7 @@ pub fn build_tray(app: &tauri::AppHandle, config: &AuraConfig) -> Result<(), Box
         .item(&autocall_i)
         .item(&mic_submenu)
         .separator()
+        .item(&settings_i)
         .item(&quit_i)
         .build()?;
 
@@ -88,6 +90,24 @@ pub fn build_tray(app: &tauri::AppHandle, config: &AuraConfig) -> Result<(), Box
                     }
                 }
             }
+            "settings" => {
+                // Open or focus the settings window
+                if let Some(window) = app.get_webview_window("settings") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                } else {
+                    let _ = WebviewWindowBuilder::new(
+                        app,
+                        "settings",
+                        WebviewUrl::App("settings.html".into())
+                    )
+                    .title("AuraRTC Settings")
+                    .inner_size(700.0, 750.0)
+                    .resizable(true)
+                    .center()
+                    .build();
+                }
+            }
             _ => {}
         })
         .on_tray_icon_event(move |_tray, event| match event {
@@ -139,6 +159,7 @@ pub fn update_mics_internal(app: tauri::AppHandle, payload: UpdateMicsPayload) {
                 .checked(config.auto_call_enabled)
                 .build(&app).unwrap();
             let quit_i = MenuItemBuilder::with_id("quit", "Quit").build(&app).unwrap();
+            let settings_i = MenuItemBuilder::with_id("settings", "⚙️ Settings").build(&app).unwrap();
 
             let mut mic_submenu = SubmenuBuilder::new(&app, "🎙️ Micrófono");
             if payload.mics.is_empty() {
@@ -160,6 +181,7 @@ pub fn update_mics_internal(app: tauri::AppHandle, payload: UpdateMicsPayload) {
                 .item(&autocall_i)
                 .item(&mic_submenu)
                 .separator()
+                .item(&settings_i)
                 .item(&quit_i)
                 .build().unwrap();
 

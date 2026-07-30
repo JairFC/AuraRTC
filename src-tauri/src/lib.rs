@@ -6,13 +6,13 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, Listener};
 use domain::config::{load_config, save_config};
 use domain::state::{AppState, AppStateWrapper};
 use infrastructure::tray::{build_tray, update_mics_internal, UpdateMicsPayload};
-use infrastructure::ipc::{logdom, resizeorb};
+use infrastructure::ipc::{logdom, resizeorb, get_config, save_config_cmd, get_config_path_cmd};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![resizeorb, logdom])
+        .invoke_handler(tauri::generate_handler![resizeorb, logdom, get_config, save_config_cmd, get_config_path_cmd])
         .setup(|app| {
             // 1. Inicializar Estado
             app.manage(AppStateWrapper(Mutex::new(AppState::default())));
@@ -79,7 +79,12 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Prevenir que se cierre el programa. Ocultar la ventana en su lugar.
+                let label = window.label();
+                if label == "settings" {
+                    // Settings window can close normally
+                    return;
+                }
+                // Main and Orb windows hide instead of closing
                 window.hide().unwrap();
                 api.prevent_close();
             }
