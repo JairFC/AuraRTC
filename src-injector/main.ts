@@ -1,7 +1,7 @@
 import { TauriIPCAdapter } from "./infrastructure/adapters/TauriIPCAdapter";
 import { DebouncedDOMObserver } from "./infrastructure/adapters/DebouncedDOMObserver";
 import { WebRTCMonkeyPatch } from "./infrastructure/adapters/WebRTCMonkeyPatch";
-import { AppConfig } from "./domain/models/AppConfig";
+import { AppConfig, emptyConfig } from "./domain/models/AppConfig";
 import { CallStatus } from "./domain/models/CallStatus";
 
 (function() {
@@ -13,25 +13,20 @@ import { CallStatus } from "./domain/models/CallStatus";
 
     console.log("=== AURARTC INJECTOR ALIVE ===");
 
-    // 2. Dependencias
+    // 2. Configuration — injected by Tauri, fallback to generic defaults
+    const config: AppConfig = (window as any).__AURARTC_CONFIG__
+        ? { ...emptyConfig(), ...(window as any).__AURARTC_CONFIG__ }
+        : emptyConfig();
+
+    // 3. Dependencies (pass VAD config to WebRTC adapter)
     const ipc = new TauriIPCAdapter();
     const dom = new DebouncedDOMObserver();
-    const webrtc = new WebRTCMonkeyPatch();
+    const webrtc = new WebRTCMonkeyPatch(config.vad);
 
-    // 3. Estado y Configuración Base
+    // 4. State
     let state = CallStatus.DISCONNECTED;
-    
-    const config: AppConfig = (window as any).__AURARTC_CONFIG__ || {
-        targetUrl: window.location.href,
-        autoCallEnabled: true,
-        selectors: {
-            hangup: ['hang up', 'colgar', 'terminar', 'end call', 'leave'],
-            bot: ['maya', 'maya-button', 'reconnect', 'continue session', 'try again', 'retry'],
-            dismiss: ['skip', 'close', 'done', 'not now', 'cerrar', 'omitir', 'rate', 'dismiss', 'maybe later']
-        }
-    };
 
-    // 4. Lógica de Audio (VAD)
+    // 5. Voice Activity Detection (VAD)
     webrtc.onVoiceActivity(() => {
         ipc.emit('user-speaking', {});
     });
@@ -42,7 +37,7 @@ import { CallStatus } from "./domain/models/CallStatus";
         webrtc.startAnalysis(stream);
     });
 
-    // 5. Lógica del DOM (Watchdog Orchestrator)
+    // 6. DOM Watchdog Orchestrator — uses configurable selectors
     dom.startWatching(() => {
         // Dismiss modals first
         if (dom.findAndClick(config.selectors.dismiss)) {
@@ -57,7 +52,7 @@ import { CallStatus } from "./domain/models/CallStatus";
                 console.log("[AuraRTC] Call started (Hangup visible)");
                 state = CallStatus.CONNECTED;
                 ipc.emit('connected', {});
-            } else if (config.autoCallEnabled) {
+            } else if (config.auto_call_enabled) {
                 if (dom.findAndClick(config.selectors.bot)) {
                     console.log("[AuraRTC] Bot button found! Connecting...");
                 }
@@ -71,5 +66,5 @@ import { CallStatus } from "./domain/models/CallStatus";
         }
     });
 
-    console.log("[AuraRTC] Clean Architecture Injector Loaded successfully.");
+    console.log(`[AuraRTC] Injector loaded for: ${config.site_name} (${config.target_url})`);
 })();

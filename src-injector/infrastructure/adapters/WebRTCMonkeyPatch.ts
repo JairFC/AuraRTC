@@ -1,4 +1,5 @@
 import { IAudioAnalyzer } from "../../domain/ports/IAudioAnalyzer";
+import { VadConfig } from "../../domain/models/AppConfig";
 
 export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     private audioCtx: AudioContext | null = null;
@@ -10,6 +11,16 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     private onSilenceCallback: (() => void) | null = null;
     private analysisInterval: number | null = null;
     private isSpeaking: boolean = false;
+    private vadConfig: VadConfig;
+
+    constructor(vadConfig?: VadConfig) {
+        this.vadConfig = vadConfig || {
+            noise_floor_max: 40.0,
+            speaking_threshold: 12.0,
+            speaking_offset: 10.0,
+            analysis_interval_ms: 30,
+        };
+    }
 
     public onVoiceActivity(callback: () => void): void {
         this.onVoiceCallback = callback;
@@ -60,9 +71,9 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
                     
                     if (average < noiseFloor) noiseFloor = average;
                     else noiseFloor += 0.1;
-                    if (noiseFloor > 40) noiseFloor = 40;
+                    if (noiseFloor > this.vadConfig.noise_floor_max) noiseFloor = this.vadConfig.noise_floor_max;
 
-                    if (average > noiseFloor + 10 && average > 12) {
+                    if (average > noiseFloor + this.vadConfig.speaking_offset && average > this.vadConfig.speaking_threshold) {
                         speakingCounter = 10;
                     }
 
@@ -78,7 +89,7 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
                             if (this.onSilenceCallback) this.onSilenceCallback();
                         }
                     }
-                }, 30);
+                }, this.vadConfig.analysis_interval_ms);
             }
         } catch (e) {
             console.error("[AuraRTC] Failed to hook audio: ", e);

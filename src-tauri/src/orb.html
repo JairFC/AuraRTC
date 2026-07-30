@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Sesame Orb Pro Max V2</title>
+  <title>AuraRTC Orb</title>
   <style>
     body, html {
       margin: 0;
@@ -83,13 +83,13 @@
     // ==========================================
     // ESTADOS
     // ==========================================
-    window.isMayaSpeaking = false;
+    window.isRemoteSpeaking = false;
     window.isUserSpeaking = false;
     window.isDisconnected = false;
     
     // Eliminado el setupMic() local. Ahora Rust inyecta directamente
-    // window.isUserSpeaking y window.isMayaSpeaking basado en lo que
-    // escucha injector.js desde la página web de Sesame.
+    // // These globals are set by the injector via IPC events.
+    // Listens for IPC events from the injector running inside the target site.
 
 
     // SISTEMA DE PARTÍCULAS MEJORADO
@@ -146,7 +146,7 @@
 
         // Modificadores
         const userSpeaking = window.isUserSpeaking;
-        const mayaSpeaking = window.isMayaSpeaking;
+        const remoteSpeaking = window.isRemoteSpeaking;
         
         // Determinar colores objetivo
         let targetR1, targetG1, targetB1;
@@ -160,14 +160,14 @@
             targetR2 = 138; targetG2 = 0; targetB2 = 0;
             targetScale = 0.8;
             pColor = 'rgba(255, 100, 100, 0.5)';
-        } else if (mayaSpeaking && userSpeaking) {
+        } else if (remoteSpeaking && userSpeaking) {
             // DORADO/ORO (Interrupción - Ambos Hablando)
             targetR1 = 255; targetG1 = 215; targetB1 = 0;
             targetR2 = 180; targetG2 = 100; targetB2 = 0;
             targetScale = 1.4 + Math.sin(Date.now() / 50) * 0.15; // Vibración máxima
             pColor = 'rgba(255, 215, 0, 0.8)';
-        } else if (mayaSpeaking) {
-            // PÚRPURA (Maya Hablando)
+        } else if (remoteSpeaking) {
+            // PÚRPURA (Remote Speaking)
             targetR1 = 255; targetG1 = 0; targetB1 = 255;
             targetR2 = 110; targetG2 = 0; targetB2 = 138;
             targetScale = 1.3 + Math.sin(Date.now() / 100) * 0.1; // Pulso rápido
@@ -196,7 +196,7 @@
         currentB2 = lerp(currentB2, targetB2, lerpSpeed);
         currentScale = lerp(currentScale, targetScale, lerpSpeed * 1.5);
         
-        let targetSpeedMult = mayaSpeaking && userSpeaking ? 4 : (mayaSpeaking ? 3 : (userSpeaking ? 2 : 1));
+        let targetSpeedMult = remoteSpeaking && userSpeaking ? 4 : (remoteSpeaking ? 3 : (userSpeaking ? 2 : 1));
         currentSpeedMult = lerp(currentSpeedMult, targetSpeedMult, 0.05);
 
         corePulse += 0.05;
@@ -226,14 +226,14 @@
             
             let currentRadius = p.radius * scaleFactor * 0.8;
             if (userSpeaking) currentRadius += 10 * scaleFactor;
-            if (window.isMayaSpeaking) currentRadius += Math.sin(p.wobble) * 10 * scaleFactor;
-            if (userSpeaking && window.isMayaSpeaking) currentRadius += Math.random() * 5 * scaleFactor; // Tensión
+            if (window.isRemoteSpeaking) currentRadius += Math.sin(p.wobble) * 10 * scaleFactor;
+            if (userSpeaking && window.isRemoteSpeaking) currentRadius += Math.random() * 5 * scaleFactor; // Tensión
 
             const px = cx + Math.cos(p.angle) * currentRadius + Math.cos(p.wobble) * 5;
             const py = cy + Math.sin(p.angle) * currentRadius + Math.sin(p.wobble) * 5;
 
             ctx.beginPath();
-            ctx.arc(px, py, p.size * (window.isMayaSpeaking ? 1.5 : 1), 0, Math.PI * 2);
+            ctx.arc(px, py, p.size * (window.isRemoteSpeaking ? 1.5 : 1), 0, Math.PI * 2);
             ctx.fillStyle = pColor;
             ctx.fill();
         });
@@ -246,7 +246,7 @@
         coreGrad.addColorStop(0.2, color1);
         coreGrad.addColorStop(1, color2);
         ctx.fillStyle = coreGrad;
-        ctx.shadowBlur = window.isMayaSpeaking ? 30 : 20;
+        ctx.shadowBlur = window.isRemoteSpeaking ? 30 : 20;
         ctx.shadowColor = color1;
         ctx.fill();
     }

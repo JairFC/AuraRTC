@@ -3,7 +3,7 @@ pub mod infrastructure;
 
 use std::sync::Mutex;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, Listener};
-use domain::config::{load_config, save_config, AuraConfig};
+use domain::config::{load_config, save_config};
 use domain::state::{AppState, AppStateWrapper};
 use infrastructure::tray::{build_tray, update_mics_internal, UpdateMicsPayload};
 use infrastructure::ipc::{logdom, resizeorb};
@@ -17,14 +17,15 @@ pub fn run() {
             // 1. Inicializar Estado
             app.manage(AppStateWrapper(Mutex::new(AppState::default())));
 
-            // 2. Cargar Configuración (Asegurándonos que exista el default)
+            // 2. Cargar Configuración (crear archivo si es la primera vez)
             let config = load_config(app.handle());
-            if config.target_url == "https://app.sesame.com/" {
-                save_config(app.handle(), &config); // Guarda el archivo si es la primera vez
+            if config.is_unconfigured() {
+                // First run — save default config so the user can edit aurartc.json
+                save_config(app.handle(), &config);
+                println!("[AuraRTC] First run detected. Edit aurartc.json to configure your target site.");
             }
 
             // 3. Registrar Listeners de Rust (Eventos IPC Web -> Rust)
-            // Ya NO usamos "syncstatus" en Rust. La web se comunica directo con el Orbe.
             let app_handle_mics = app.handle().clone();
             app.listen_any("update_mics_event", move |event| {
                 let payload_str = event.payload();
@@ -43,12 +44,13 @@ pub fn run() {
             );
 
             // 5. Instanciar Ventana Principal
+            let window_title = format!("AuraRTC — {}", config.site_name);
             let window = WebviewWindowBuilder::new(
                 app,
                 "main",
                 WebviewUrl::External(config.target_url.parse().unwrap())
             )
-            .title("AuraRTC Companion")
+            .title(&window_title)
             .inner_size(800.0, 600.0)
             .initialization_script(&init_script)
             .build()?;
