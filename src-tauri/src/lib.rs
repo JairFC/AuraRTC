@@ -35,6 +35,39 @@ pub fn run() {
                 }
             });
 
+            // 4. Event bridge: relay VAD + call events from injector (main window) → orb window
+            // The injector emits these events via window.__TAURI__.event.emit().
+            // We catch them in Rust and eval JS in the orb to update its animation state.
+            let app_speaking = app.handle().clone();
+            app.listen_any("user-speaking", move |_| {
+                if let Some(orb) = app_speaking.get_webview_window("orb") {
+                    let _ = orb.eval("window.isUserSpeaking = true;");
+                }
+            });
+
+            let app_silent = app.handle().clone();
+            app.listen_any("user-silent", move |_| {
+                if let Some(orb) = app_silent.get_webview_window("orb") {
+                    let _ = orb.eval("window.isUserSpeaking = false;");
+                }
+            });
+
+            let app_connected = app.handle().clone();
+            app.listen_any("connected", move |_| {
+                println!("[AuraRTC] Call connected — orb switching to active mode.");
+                if let Some(orb) = app_connected.get_webview_window("orb") {
+                    let _ = orb.eval("window.isDisconnected = false; window.isRemoteSpeaking = false;");
+                }
+            });
+
+            let app_disconnected = app.handle().clone();
+            app.listen_any("disconnected", move |_| {
+                println!("[AuraRTC] Call disconnected — orb switching to red mode.");
+                if let Some(orb) = app_disconnected.get_webview_window("orb") {
+                    let _ = orb.eval("window.isDisconnected = true; window.isUserSpeaking = false; window.isRemoteSpeaking = false;");
+                }
+            });
+
             // 4. Build injector bundle with config injected at the front
             let init_script = build_init_script(&config);
 

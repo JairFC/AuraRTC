@@ -102,6 +102,12 @@ export class DebouncedDOMObserver implements IDOMClicker {
                 onMutated();
             }
         }, this.THROTTLE_MS);
+
+        // Initial proactive scans: catches buttons already in DOM on load (no mutation fires).
+        // SPA pages like Sesame may render content before mutations start.
+        [1000, 3000, 5000, 8000].forEach(delay => {
+            setTimeout(() => { this.isDirty = true; }, delay);
+        });
     }
 
     public stopWatching(): void {
