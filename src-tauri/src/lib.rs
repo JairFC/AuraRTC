@@ -40,6 +40,7 @@ pub fn run() {
             // We catch them in Rust and eval JS in the orb to update its animation state.
             let app_speaking = app.handle().clone();
             app.listen_any("user-speaking", move |_| {
+                println!("[AuraRTC] event: user-speaking");
                 if let Some(orb) = app_speaking.get_webview_window("orb") {
                     let _ = orb.eval("window.isUserSpeaking = true;");
                 }
@@ -47,8 +48,26 @@ pub fn run() {
 
             let app_silent = app.handle().clone();
             app.listen_any("user-silent", move |_| {
+                println!("[AuraRTC] event: user-silent");
                 if let Some(orb) = app_silent.get_webview_window("orb") {
                     let _ = orb.eval("window.isUserSpeaking = false;");
+                }
+            });
+
+            // Remote (incoming WebRTC audio) VAD bridge → orb animation.
+            let app_remote_speaking = app.handle().clone();
+            app.listen_any("remote-speaking", move |_| {
+                println!("[AuraRTC] event: remote-speaking");
+                if let Some(orb) = app_remote_speaking.get_webview_window("orb") {
+                    let _ = orb.eval("window.isRemoteSpeaking = true;");
+                }
+            });
+
+            let app_remote_silent = app.handle().clone();
+            app.listen_any("remote-silent", move |_| {
+                println!("[AuraRTC] event: remote-silent");
+                if let Some(orb) = app_remote_silent.get_webview_window("orb") {
+                    let _ = orb.eval("window.isRemoteSpeaking = false;");
                 }
             });
 
