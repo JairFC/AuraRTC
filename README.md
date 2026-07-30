@@ -4,6 +4,11 @@
 
 Built with Tauri v2, Rust, and TypeScript Clean Architecture.
 
+> Status: **experimental / proof-of-concept.** The orb reacts to local + remote
+> voice activity on any WebRTC site. Tested against browser-based calling apps;
+> see [Tested sites](#-tested-sites--how-to-try-it). Not affiliated with any
+> service it overlays.
+
 ---
 
 ## ✨ Features
@@ -126,6 +131,47 @@ npm run tauri build
 5. **DOM Observer** watches for configurable button patterns and auto-clicks when needed
 6. **IPC Events** flow from the injector to the Rust backend and the floating Orb
 7. The **Orb** (a transparent always-on-top Canvas 2D window) visualizes voice activity with particles
+
+---
+
+## 🧪 Tested sites & how to try it
+
+AuraRTC is site-agnostic: point `target_url` at any WebRTC-enabled page and it
+just works. Good places to validate the orb without setup:
+
+| Site | What it validates | Suggested `selectors.bot` |
+|------|-------------------|---------------------------|
+| [Mozilla gUM test page](https://mozilla.github.io/webrtc-landing/gum_test.html) | Local-mic VAD only (no call needed) | *(disable auto-call)* |
+| [Talky](https://talky.io) / [Whereby](https://whereby.com) | Full local **+ remote** VAD (open the same room in two tabs) | `join`, `enter room` |
+| Google Meet / Discord web | Real-world stress test | `join`, `enter voice` |
+
+**Fastest remote-voice test:** open a Talky room in AuraRTC's main window and in
+a second browser tab, then talk from the other tab — the orb should turn purple
+(remote speaking) and gold when both sides talk at once.
+
+### How the orb communicates state
+
+| Orb color | Meaning |
+|-----------|---------|
+| 🟢 Green | Idle / silent |
+| 🔵 Cyan | **You** are speaking |
+| 🟣 Purple | **Remote** participant is speaking |
+| 🟡 Gold | Both speaking at once (interruption) |
+| 🔴 Red | Disconnected |
+
+---
+
+## ⚠️ Limitations & notes
+
+- **Permissions:** the target site must be served over HTTPS and grant
+  microphone access for VAD to engage.
+- **Auto-call** matches buttons by text/aria-label (configurable). Heavily
+  obfuscated SPAs may need custom `selectors.bot` entries.
+- **Remote VAD** taps `RTCPeerConnection` inbound tracks and `<audio>`/`<video>`
+  elements; media elements are re-routed to the audio destination so the site's
+  own playback is preserved.
+- **Single remote voice:** the orb currently treats all inbound audio as one
+  "remote" signal. Per-participant coloring is a future enhancement.
 
 ---
 

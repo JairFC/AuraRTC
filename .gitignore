@@ -40,3 +40,6 @@ cargo_error.log
 # (the live copies live in public/, served via frontendDist)
 src-tauri/src/orb.html
 src-tauri/src/settings.html
+
+# Internal agent/dev workflow config
+.agents/
