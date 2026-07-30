@@ -1,10 +1,10 @@
 pub mod domain;
 pub mod infrastructure;
 
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, Listener};
 use domain::config::{load_config, save_config};
 use domain::state::{AppState, AppStateWrapper};
-use infrastructure::tray::build_tray;
+use infrastructure::tray::{build_tray, update_mics_internal, UpdateMicsPayload};
 use infrastructure::ipc::{logdom, resizeorb, get_config, save_config_cmd, get_config_path_cmd, apply_config, build_init_script, update_mics_cmd};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,6 +22,18 @@ pub fn run() {
                 save_config(app.handle(), &config);
                 println!("[AuraRTC] First run detected. Edit aurartc.json to configure your target site.");
             }
+
+            // 3. Fallback listener for update_mics_event (emitted from injector when invoke fails)
+            let app_handle_mics = app.handle().clone();
+            app.listen_any("update_mics_event", move |event| {
+                let payload_str = event.payload();
+                println!("[AuraRTC] update_mics_event received: {}", payload_str);
+                if let Ok(payload) = serde_json::from_str::<UpdateMicsPayload>(payload_str) {
+                    update_mics_internal(app_handle_mics.clone(), payload);
+                } else {
+                    println!("[AuraRTC] Failed to parse update_mics_event payload: {}", payload_str);
+                }
+            });
 
             // 4. Build injector bundle with config injected at the front
             let init_script = build_init_script(&config);

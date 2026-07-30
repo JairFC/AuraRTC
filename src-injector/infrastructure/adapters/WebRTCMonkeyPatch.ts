@@ -114,7 +114,11 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     public hookGetUserMedia(onStreamAcquired: (stream: MediaStream) => void): void {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
         
-        const origGetUserMedia = navigator.mediaDevices.getUserMedia;
+        // IMPORTANT: capture the original BEFORE patching, and store on window
+        // so MicManager._tryRequestPermission() can use it safely.
+        const origGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        (window as any).__aura_orig_gum = origGetUserMedia;
+
         navigator.mediaDevices.getUserMedia = async (constraints) => {
             console.log("[AuraRTC] Intercepted getUserMedia call!");
             
@@ -128,17 +132,23 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
                 }
             }
 
-            const stream = await origGetUserMedia.call(navigator.mediaDevices, constraints);
+            const stream = await origGetUserMedia(constraints);
             
             // Bypass autoplay policy natively because user clicked to allow mic
             this.getOrCreateAudioContext();
             
             onStreamAcquired(stream);
-            
-            // Sync mic list since we just got fresh permissions
-            this.micManager.refreshMicList();
+
+            // KEY: notify MicManager that we now have permission.
+            // This triggers enumerateDevices which will now return labels.
+            this.micManager.notifyPermissionGranted();
             
             return stream;
         };
+
+        console.log("[AuraRTC] getUserMedia hooked. Attempting early mic permission request...");
+        // Now that the original is captured, try an early permission request for the mic list.
+        // We do this AFTER hooking so the monkey-patch doesn't recurse.
+        setTimeout(() => this.micManager.refreshMicList(), 1500);
     }
 }

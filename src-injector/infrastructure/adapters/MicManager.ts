@@ -5,46 +5,19 @@ export class MicManager {
     private preferredMicId: string | null = null;
     private selectedMicIdx: number = 0;
     private ipc: IIPCAdapter;
-    private permissionRequested: boolean = false;
+    // Flags to avoid requesting getUserMedia ourselves — we piggyback on the
+    // site's own permission grant (via WebRTCMonkeyPatch.hookGetUserMedia).
+    private hasMediaPermission: boolean = false;
+    private listScheduled: boolean = false;
 
     constructor(ipc: IIPCAdapter) {
         this.ipc = ipc;
-        
-        // --- VISUAL DEBUGGER ---
-        const debugBox = document.createElement('div');
-        debugBox.style.position = 'fixed';
-        debugBox.style.bottom = '10px';
-        debugBox.style.left = '10px';
-        debugBox.style.width = '400px';
-        debugBox.style.height = '200px';
-        debugBox.style.overflowY = 'auto';
-        debugBox.style.background = 'rgba(0,0,0,0.8)';
-        debugBox.style.color = '#0f0';
-        debugBox.style.zIndex = '999999';
-        debugBox.style.fontFamily = 'monospace';
-        debugBox.style.fontSize = '12px';
-        debugBox.style.padding = '10px';
-        debugBox.style.pointerEvents = 'none';
-        debugBox.id = 'aura-debug-box';
-        if (document.body) document.body.appendChild(debugBox);
-        else window.addEventListener('DOMContentLoaded', () => document.body.appendChild(debugBox));
-        
-        (window as any).rawLog = (msg: string) => {
-            console.log(msg);
-            const box = document.getElementById('aura-debug-box');
-            if (box) {
-                box.innerHTML += `<div>${msg}</div>`;
-                box.scrollTop = box.scrollHeight;
-            }
-        };
-        // ------------------------
 
         if (navigator.mediaDevices) {
             navigator.mediaDevices.addEventListener('devicechange', () => this.refreshMicList());
-            // Slight delay to allow page loading
-            setTimeout(() => this.refreshMicList(), 1000);
         }
 
+        // Listen for tray mic-selection events
         this.ipc.listen('change_mic', (payload: any) => {
             const idx = payload as number;
             if (this.availableMics[idx]) {
@@ -61,29 +34,39 @@ export class MicManager {
         return this.preferredMicId;
     }
 
-    public async refreshMicList() {
+    /**
+     * Called by WebRTCMonkeyPatch AFTER it successfully gets a stream.
+     * This is the signal that the browser has already granted mic permission
+     * so we can safely enumerate devices with labels.
+     */
+    public notifyPermissionGranted(): void {
+        this.hasMediaPermission = true;
+        // Small delay so the permission state propagates to enumerateDevices
+        setTimeout(() => this.refreshMicList(), 300);
+    }
+
+    public async refreshMicList(): Promise<void> {
         if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-        
+
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const audioMics = devices.filter(d => d.kind === 'audioinput' && d.deviceId);
-            
-            // If labels are empty, we might need to request permission
-            if (audioMics.length > 0 && !audioMics[0].label) {
-                if (!this.permissionRequested) {
-                    this.permissionRequested = true;
-                    (window as any).rawLog("[MicManager] Requesting permissions proactively...");
-                    try {
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                        (window as any).rawLog("[MicManager] Permissions granted.");
-                        stream.getTracks().forEach(t => t.stop());
-                        this.refreshMicList(); // Try again
-                    } catch (e: any) {
-                        (window as any).rawLog("[MicManager] Permission denied: " + e.message);
-                    }
+
+            // Check if we have labels — if not and we don't have permission yet,
+            // just wait for the site to grant permission naturally via WebRTC.
+            const hasLabels = audioMics.some(d => d.label && d.label.length > 0);
+            if (!hasLabels) {
+                console.log("[MicManager] No mic labels yet — waiting for page to grant permission naturally.");
+                // Try once proactively, but ONLY using the already-captured original getUserMedia
+                // to avoid recursive monkey-patch issues.
+                if (!this.hasMediaPermission && !this.listScheduled) {
+                    this.listScheduled = true;
+                    this._tryRequestPermission();
                 }
                 return;
             }
+
+            this.hasMediaPermission = true;
 
             const uniqueMics: MediaDeviceInfo[] = [];
             const seenIds = new Set<string>();
@@ -96,6 +79,7 @@ export class MicManager {
             }
             this.availableMics = uniqueMics;
 
+            // Maintain selected mic index
             if (this.preferredMicId) {
                 const foundIdx = uniqueMics.findIndex(m => m.deviceId === this.preferredMicId);
                 if (foundIdx !== -1) {
@@ -105,16 +89,66 @@ export class MicManager {
                     this.preferredMicId = uniqueMics.length > 0 ? uniqueMics[0].deviceId : null;
                 }
             } else if (uniqueMics.length > 0) {
-                this.preferredMicId = uniqueMics[this.selectedMicIdx].deviceId;
+                this.preferredMicId = uniqueMics[this.selectedMicIdx]?.deviceId ?? null;
+            }
+
+            if (uniqueMics.length === 0) {
+                console.warn("[MicManager] No unique mics found after filtering.");
+                return;
             }
 
             const micLabels = uniqueMics.map(m => m.label || "Micrófono Desconocido");
-            (window as any).rawLog(`[MicManager] Emitting ${micLabels.length} mics to tray.`);
-            this.ipc.invoke('update_mics_cmd', { payload: { mics: micLabels, selectedIdx: this.selectedMicIdx } })
-                .catch((e: any) => (window as any).rawLog("[MicManager] Failed to invoke update_mics_cmd: " + e));
+            console.log(`[MicManager] Sending ${micLabels.length} mics to tray: ${micLabels.join(', ')}`);
+            this._sendToTray(micLabels);
 
         } catch (e) {
-            (window as any).rawLog("[MicManager] Failed to enumerate devices: " + e);
+            console.error("[MicManager] Failed to enumerate devices:", e);
         }
+    }
+
+    /**
+     * Sends the mic list to Rust via eval on the main window.
+     * We use a Tauri command invoke; if that fails we try the event system.
+     */
+    private _sendToTray(micLabels: string[]): void {
+        const payload = { mics: micLabels, selectedIdx: this.selectedMicIdx };
+
+        // Primary: invoke command
+        this.ipc.invoke('update_mics_cmd', { payload })
+            .then(() => console.log("[MicManager] update_mics_cmd OK"))
+            .catch((e: any) => {
+                console.error("[MicManager] invoke failed, trying emit:", e);
+                // Fallback: emit event (works in local windows, may not in remote)
+                this.ipc.emit('update_mics_event', payload);
+            });
+    }
+
+    /**
+     * Request mic permission using the CAPTURED original getUserMedia (not the monkey-patched one).
+     * Must be called AFTER WebRTCMonkeyPatch.hookGetUserMedia() captures the original.
+     * We store the original on window so it's accessible here.
+     */
+    private _tryRequestPermission(): void {
+        // Use the original getUserMedia captured before monkey-patching
+        const origGUM = (window as any).__aura_orig_gum;
+        if (!origGUM) {
+            console.log("[MicManager] Original getUserMedia not yet captured, will wait.");
+            this.listScheduled = false; // Reset so we can try again
+            return;
+        }
+
+        console.log("[MicManager] Trying to get mic permission via original getUserMedia...");
+        origGUM.call(navigator.mediaDevices, { audio: true })
+            .then((stream: MediaStream) => {
+                console.log("[MicManager] Permission granted via proactive request.");
+                stream.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+                this.hasMediaPermission = true;
+                this.listScheduled = false;
+                this.refreshMicList();
+            })
+            .catch((e: any) => {
+                console.warn("[MicManager] Proactive permission denied:", e.message);
+                this.listScheduled = false;
+            });
     }
 }
