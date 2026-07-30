@@ -50,7 +50,7 @@ export class DebouncedDOMObserver implements IDOMClicker {
             }
         }
 
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
         let node;
         while (node = walker.nextNode()) {
             if (node.parentElement && node.parentElement.closest('#aurartc-debug-overlay')) continue;

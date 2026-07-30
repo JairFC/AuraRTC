@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:injector && tsc && vite build",
+    "build": "npm run build:injector && vite build",
+    "typecheck": "tsc -p tsconfig.json",
     "build:injector": "vite build -c vite.injector.config.ts",
     "preview": "vite preview",
     "tauri": "tauri"

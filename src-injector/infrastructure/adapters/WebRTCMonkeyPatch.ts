@@ -25,7 +25,6 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     private onVoiceCallback: (() => void) | null = null;
     private onSilenceCallback: (() => void) | null = null;
     private analysisInterval: number | null = null;
-    private isSpeaking: boolean = false;
     private userDetector: VoiceDetector | null = null;
 
     // --- Remote (incoming WebRTC audio) VAD ---
@@ -136,8 +135,8 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
             const detector: VoiceDetector = {
                 isSpeaking: false, noiseFloor: 10, speakingCounter: 0,
                 analyser, dataArray,
-                onSpeak: () => { this.isSpeaking = true; if (this.onVoiceCallback) this.onVoiceCallback(); },
-                onSilent: () => { this.isSpeaking = false; if (this.onSilenceCallback) this.onSilenceCallback(); },
+                onSpeak: () => { if (this.onVoiceCallback) this.onVoiceCallback(); },
+                onSilent: () => { if (this.onSilenceCallback) this.onSilenceCallback(); },
             };
             // Snapshot the detector fields so the interval reads fresh analyser data.
             this.userDetector = detector;
@@ -161,7 +160,6 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
             this.mediaSource.disconnect();
             this.mediaSource = null;
         }
-        this.isSpeaking = false;
         this.userDetector = null;
     }
 
