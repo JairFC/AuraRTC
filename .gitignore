@@ -35,3 +35,8 @@ cargo_error.log
 
 # ZCode client config
 .zcode/
+
+# Dev artifacts: HTML copies that landed in src-tauri/src during development
+# (the live copies live in public/, served via frontendDist)
+src-tauri/src/orb.html
+src-tauri/src/settings.html
