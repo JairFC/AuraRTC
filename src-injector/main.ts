@@ -35,8 +35,18 @@ import { CallStatus } from "./domain/models/CallStatus";
     // 4. State
     let state = CallStatus.DISCONNECTED;
 
+    // Acoustic-echo guard: when the remote participant speaks, their voice leaks
+    // into the local mic (speakers → mic). To stop the orb from flickering to
+    // gold (double-talk) on that echo, we gate local speech emission while the
+    // remote is active, with a short hold-off so a genuine interruption can still
+    // register once it clearly persists past the echo window.
+    let remoteActive = false;
+    let remoteReleaseAt = 0;
+    const ECHO_GATE_MS = 450;
+
     // 5. Voice Activity Detection (VAD) — local microphone
     webrtc.onVoiceActivity(() => {
+        if (remoteActive && Date.now() < remoteReleaseAt) return; // suppress echo
         ipc.emit('user-speaking', {});
     });
     webrtc.onSilence(() => {
@@ -50,9 +60,15 @@ import { CallStatus } from "./domain/models/CallStatus";
     // Site-agnostic: taps RTCPeerConnection inbound tracks + <audio>/<video>.
     // The payload carries the speaking track's color for multi-party tinting.
     webrtc.onRemoteVoiceActivity((p) => {
+        remoteActive = true;
+        remoteReleaseAt = Date.now() + ECHO_GATE_MS;
         ipc.emit('remote-speaking', p);
     });
     webrtc.onRemoteSilence((p) => {
+        remoteActive = false;
+        // Keep the gate armed briefly after the remote stops, so the echo tail
+        // doesn't immediately trigger a spurious "user speaking".
+        remoteReleaseAt = Date.now() + ECHO_GATE_MS;
         ipc.emit('remote-silent', p);
     });
     webrtc.hookRemoteAudio();
