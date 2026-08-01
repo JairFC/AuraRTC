@@ -13,6 +13,10 @@ interface VoiceDetector {
     speakingCounter: number;
     analyser: AnalyserNode;
     dataArray: Uint8Array;
+    /** Stable per-source color (hash of track id). */
+    color: string;
+    /** WebRTC track id (or synthetic id for media elements). */
+    id: string;
     onSpeak: () => void;
     onSilent: () => void;
 }
@@ -137,6 +141,7 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
             const detector: VoiceDetector = {
                 isSpeaking: false, noiseFloor: 10, speakingCounter: 0,
                 analyser, dataArray,
+                color: '#00FFFF', id: 'local',
                 onSpeak: () => { if (this.onVoiceCallback) this.onVoiceCallback(); },
                 onSilent: () => { if (this.onSilenceCallback) this.onSilenceCallback(); },
             };
@@ -285,15 +290,19 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     }
 
     /**
-     * Stable color (hex) for a given track id. Deterministic hash → HSL hue,
-     * so the same remote participant keeps the same color across reconnections.
+     * Stable color (hex) for a given track id. The FIRST remote track always gets
+     * the classic purple, so a 1:1 call looks identical to before multi-party.
+     * Subsequent tracks get a deterministic hue spread so participants stay
+     * distinguishable without ML.
      */
     private colorForTrack(trackId: string): string {
+        // Default purple — keeps the original look for single-remote calls.
+        if (this.remoteDetectors.length === 0) return '#FF00FF';
         let h = 0;
         for (let i = 0; i < trackId.length; i++) h = (h * 31 + trackId.charCodeAt(i)) >>> 0;
-        const hue = h % 360;
-        // vivid, high-saturation color that reads well on the orb
-        return hslToHex(hue, 90, 60);
+        // Spread hues avoiding the cyan band (reserved for the local user).
+        const hue = 20 + (h % 300);
+        return hslToHex(hue, 85, 58);
     }
 
     /** Shared analysis entry: any AudioNode (stream or media-element source). */
@@ -304,26 +313,34 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
         source.connect(analyser);
 
         const color = this.colorForTrack(trackId);
+        // Detectors carry no callbacks — aggregation is centralized in the
+        // sampler so that "remote speaking" only flips to silent when NO
+        // detector is active (multi-party coordination).
         const detector: VoiceDetector = {
             isSpeaking: false,
             noiseFloor: 2, // remote audio is decoded, so it sits very low when idle
             speakingCounter: 0,
             analyser,
             dataArray: new Uint8Array(analyser.frequencyBinCount),
-            onSpeak: () => {
-                if (this.onRemoteVoiceCallback) this.onRemoteVoiceCallback({ id: trackId, color });
-            },
-            onSilent: () => {
-                if (this.onRemoteSilenceCallback) this.onRemoteSilenceCallback({ id: trackId, color });
-            },
+            color,
+            id: trackId,
+            onSpeak: () => {},
+            onSilent: () => {},
         };
         this.remoteDetectors.push(detector);
 
         if (this.remoteAnalysisInterval) return;
-        // One interval samples ALL remote detectors and emits if ANY is active —
-        // so multiple inbound tracks / media elements aggregate into one signal.
+        // One interval samples ALL detectors, then aggregates: emits "speaking"
+        // with the first active detector's color, or "silent" only when none are.
         this.remoteAnalysisInterval = window.setInterval(() => {
             for (const d of this.remoteDetectors) this.sampleDetector(d);
+            // Aggregate: pick the first active detector's color.
+            const active = this.remoteDetectors.find(d => d.isSpeaking);
+            if (active) {
+                if (this.onRemoteVoiceCallback) this.onRemoteVoiceCallback({ id: active.id, color: active.color });
+            } else {
+                if (this.onRemoteSilenceCallback) this.onRemoteSilenceCallback({ id: '', color: '' });
+            }
         }, this.vadConfig.analysis_interval_ms);
     }
 }
