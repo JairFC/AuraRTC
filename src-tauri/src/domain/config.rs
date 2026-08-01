@@ -84,6 +84,8 @@ pub struct AuraConfig {
     pub selectors: SelectorConfig,
     /// Voice Activity Detection parameters
     pub vad: VadConfig,
+    /// Active orb visual style: "aurora" | "minimal" | "pulse"
+    pub orb_style: String,
 }
 
 impl Default for AuraConfig {
@@ -94,6 +96,7 @@ impl Default for AuraConfig {
             auto_call_enabled: false,
             selectors: SelectorConfig::default(),
             vad: VadConfig::default(),
+            orb_style: "aurora".to_string(),
         }
     }
 }

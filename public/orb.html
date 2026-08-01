@@ -22,44 +22,43 @@
     #orbCanvas {
       width: 100%;
       height: 100%;
-      /* Bloquear pointer events por defecto para evitar bugs de drag, 
-         pero como queremos scroll, lo dejamos activo. */
     }
   </style>
 </head>
 <body>
-  
+
   <canvas id="orbCanvas"></canvas>
 
   <script type="module">
-    console.log("[Orb] Initializing Pro Max V2 (Atomic Canvas)...");
+    console.log("[Orb] Initializing v2 (optimized + styles + multi-party)...");
 
     const canvas = document.getElementById('orbCanvas');
     const ctx = canvas.getContext('2d');
-    
-    // Resize Handle (Tauri Command)
-    let currentSize = 175; // Sincronizado con el tamaño en lib.rs
-    
-    let invoke = null;
-    let listen = null;
 
+    let currentSize = 175; // Sincronizado con el tamaño en lib.rs
+
+    let invoke = null;
     try {
         if (window.__TAURI__) {
             invoke = window.__TAURI__.core.invoke;
-            listen = window.__TAURI__.event.listen;
-        } else {
-            console.warn("[Orb] Tauri API not injected globally.");
         }
     } catch(e) {
         console.error("[Orb] Tauri injection error", e);
     }
 
-    // Window Resize Handling
-    window.addEventListener('resize', resizeCanvas);
+    // =========================================================================
+    // FASE 1 (1a): HiDPI-aware canvas sizing. Cap DPR at 2 so retina/4K panels
+    // don't rasterize 4-9x more pixels (huge GPU cost when gaming).
+    // =========================================================================
+    const DPR = Math.min(2, window.devicePixelRatio || 1);
+
     function resizeCanvas() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        canvas.width = Math.round(window.innerWidth * DPR);
+        canvas.height = Math.round(window.innerHeight * DPR);
+        // Logical-coordinate drawing; the backing store is DPR-scaled.
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     }
+    window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
     // Ctrl + Mouse Wheel to Resize Window
@@ -68,34 +67,58 @@
             e.preventDefault();
             if (e.deltaY < 0) currentSize += 10;
             else currentSize -= 10;
-            
-            // Limites: min 50px, max 400px
             if (currentSize < 50) currentSize = 50;
             if (currentSize > 400) currentSize = 400;
-
-            console.log("[Orb] Resizing window to:", currentSize);
             if (invoke) {
-                invoke('resizeorb', { size: currentSize }).catch(e => console.error("Resize error", e));
+                invoke('resizeorb', { size: currentSize }).catch(err => console.error("Resize error", err));
             }
         }
     }, { passive: false });
 
-    // ==========================================
-    // ESTADOS
-    // ==========================================
+    // =========================================================================
+    // ESTADO — driven by Rust via orb.eval(...)
+    // =========================================================================
     window.isRemoteSpeaking = false;
     window.isUserSpeaking = false;
     window.isDisconnected = false;
-    
-    // Eliminado el setupMic() local. Ahora Rust inyecta directamente
-    // // These globals are set by the injector via IPC events.
-    // Listens for IPC events from the injector running inside the target site.
+    // FASE 3: per-speaker color set by Rust when a remote track speaks.
+    // Falls back to the classic purple when unset.
+    window.remoteColor = null;
 
+    // FASE 2: active visual style, switched at runtime via window.setOrbStyle().
+    // (Initial value is resolved after STYLES is defined — see below.)
+    let activeStyle = 'aurora';
+    window.setOrbStyle = function(name) {
+        if (STYLES[name]) {
+            activeStyle = name;
+            console.log("[Orb] style ->", name);
+        } else {
+            console.warn("[Orb] unknown style:", name);
+        }
+    };
 
-    // SISTEMA DE PARTÍCULAS MEJORADO
-    // ==========================================
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+    function lerp(start, end, amt) { return (1 - amt) * start + amt * end; }
+
+    // hex "#RRGGBB" -> {r,g,b}
+    function hexToRgb(hex) {
+        const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
+        return m ? { r: parseInt(m[1],16), g: parseInt(m[2],16), b: parseInt(m[3],16) }
+                 : { r: 255, g: 0, b: 255 }; // default purple-ish
+    }
+
+    // Shared animated state (smoothed across frames)
+    let corePulse = 0;
+    let currentR1 = 0, currentG1 = 240, currentB1 = 255;
+    let currentR2 = 0, currentG2 = 90,  currentB2 = 158;
+    let currentScale = 1;
+    let currentSpeedMult = 1;
+
+    // Particles (only used by the 'aurora' style)
     const particles = [];
-    for(let i=0; i<60; i++) {
+    for (let i = 0; i < 60; i++) {
         particles.push({
             angle: Math.random() * Math.PI * 2,
             radius: Math.random() * 40 + 20,
@@ -103,155 +126,207 @@
             size: Math.random() * 3 + 1,
             wobble: Math.random() * Math.PI * 2,
             wobbleSpeed: Math.random() * 0.05 + 0.02,
-            color: 'rgba(150, 200, 255, 0.3)'
         });
     }
 
-    // Funciones de interpolación
-    function lerp(start, end, amt) {
-        return (1 - amt) * start + amt * end;
-    }
-    
-    function hexToRgb(hex) {
-        var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-        return result ? {
-            r: parseInt(result[1], 16),
-            g: parseInt(result[2], 16),
-            b: parseInt(result[3], 16)
-        } : {r: 0, g: 0, b: 0};
-    }
-
-    let corePulse = 0;
-    
-    // Variables de estado suavizado
-    let currentR1 = 0, currentG1 = 240, currentB1 = 255;
-    let currentR2 = 0, currentG2 = 90,  currentB2 = 158;
-    let currentScale = 1;
-    let currentSpeedMult = 1;
-
-    function render() {
-        requestAnimationFrame(render);
-        
-        // Limpiar canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        const cx = canvas.width / 2;
-        const cy = canvas.height / 2;
-        
-        // El "padding invisible": engañamos al sistema de renderizado
-        // diciéndole que la pantalla es un 35% más pequeña de lo que realmente es.
-        // Esto asegura que la animación nunca toque los bordes reales del canvas.
-        const minDim = Math.min(canvas.width, canvas.height) * 0.65;
-        const baseCoreSize = minDim * 0.15;
-
-        // Modificadores
-        const userSpeaking = window.isUserSpeaking;
-        const remoteSpeaking = window.isRemoteSpeaking;
-        
-        // Determinar colores objetivo
-        let targetR1, targetG1, targetB1;
-        let targetR2, targetG2, targetB2;
-        let targetScale = 1;
-        let pColor = 'rgba(150, 200, 255, 0.3)';
+    // Resolve the visual target for this frame based on call state.
+    // Returns { c1, c2, scale, speedMult, particleColor } in RGB.
+    function resolveTarget() {
+        const user = window.isUserSpeaking;
+        const remote = window.isRemoteSpeaking;
+        const now = performance.now();
 
         if (window.isDisconnected) {
-            // ROJO (Desconectado)
-            targetR1 = 255; targetG1 = 77; targetB1 = 77;
-            targetR2 = 138; targetG2 = 0; targetB2 = 0;
-            targetScale = 0.8;
-            pColor = 'rgba(255, 100, 100, 0.5)';
-        } else if (remoteSpeaking && userSpeaking) {
-            // DORADO/ORO (Interrupción - Ambos Hablando)
-            targetR1 = 255; targetG1 = 215; targetB1 = 0;
-            targetR2 = 180; targetG2 = 100; targetB2 = 0;
-            targetScale = 1.4 + Math.sin(Date.now() / 50) * 0.15; // Vibración máxima
-            pColor = 'rgba(255, 215, 0, 0.8)';
-        } else if (remoteSpeaking) {
-            // PÚRPURA (Remote Speaking)
-            targetR1 = 255; targetG1 = 0; targetB1 = 255;
-            targetR2 = 110; targetG2 = 0; targetB2 = 138;
-            targetScale = 1.3 + Math.sin(Date.now() / 100) * 0.1; // Pulso rápido
-            pColor = 'rgba(255, 100, 255, 0.6)';
-        } else if (userSpeaking) {
-            // AZUL/CYAN BRILLANTE (Usuario Hablando)
-            targetR1 = 0; targetG1 = 255; targetB1 = 255;
-            targetR2 = 0; targetG2 = 100; targetB2 = 255;
-            targetScale = 1.2 + Math.sin(Date.now() / 150) * 0.05; // Expansión
-            pColor = 'rgba(100, 255, 255, 0.8)';
-        } else {
-            // VERDE NEUTRAL (Silencio)
-            targetR1 = 0; targetG1 = 200; targetB1 = 100;
-            targetR2 = 0; targetG2 = 90; targetB2 = 50;
-            targetScale = 1.0;
-            pColor = 'rgba(100, 255, 150, 0.3)';
+            return { c1:{r:255,g:77,b:77},  c2:{r:138,g:0,b:0},   scale:0.8, speedMult:1, particleColor:'rgba(255,100,100,0.5)' };
         }
+        if (remote && user) {
+            return { c1:{r:255,g:215,b:0},  c2:{r:180,g:100,b:0}, scale:1.4 + Math.sin(now/50)*0.15,  speedMult:4, particleColor:'rgba(255,215,0,0.8)' };
+        }
+        if (remote) {
+            // FASE 3: tint by the active remote speaker's color if provided.
+            const rgb = window.remoteColor ? hexToRgb(window.remoteColor) : { r:255, g:0, b:255 };
+            const c2 = { r: Math.round(rgb.r*0.45), g: Math.round(rgb.g*0.05), b: Math.round(rgb.b*0.55) };
+            return { c1: rgb, c2, scale:1.3 + Math.sin(now/100)*0.1, speedMult:3, particleColor:`rgba(${rgb.r},${rgb.g},${rgb.b},0.6)` };
+        }
+        if (user) {
+            return { c1:{r:0,g:255,b:255},  c2:{r:0,g:100,b:255}, scale:1.2 + Math.sin(now/150)*0.05, speedMult:2, particleColor:'rgba(100,255,255,0.8)' };
+        }
+        return { c1:{r:0,g:200,b:100}, c2:{r:0,g:90,b:50}, scale:1.0, speedMult:1, particleColor:'rgba(100,255,150,0.3)' };
+    }
 
-        // Interpolar colores suavemente (Lerp)
-        const lerpSpeed = 0.04; // Más suave
-        currentR1 = lerp(currentR1, targetR1, lerpSpeed);
-        currentG1 = lerp(currentG1, targetG1, lerpSpeed);
-        currentB1 = lerp(currentB1, targetB1, lerpSpeed);
-        currentR2 = lerp(currentR2, targetR2, lerpSpeed);
-        currentG2 = lerp(currentG2, targetG2, lerpSpeed);
-        currentB2 = lerp(currentB2, targetB2, lerpSpeed);
-        currentScale = lerp(currentScale, targetScale, lerpSpeed * 1.5);
-        
-        let targetSpeedMult = remoteSpeaking && userSpeaking ? 4 : (remoteSpeaking ? 3 : (userSpeaking ? 2 : 1));
-        currentSpeedMult = lerp(currentSpeedMult, targetSpeedMult, 0.05);
+    // =========================================================================
+    // FASE 2: STYLE ENGINE. Each style is a draw function.
+    // (ctx, cx, cy, minDim, S) where S holds smoothed colors/scale.
+    // =========================================================================
+    const STYLES = {
+
+        // 'aurora' — the classic orb: aura gradient + particles + glowing core.
+        // Optimized: shadowBlur removed (replaced by a larger radial glow pass),
+        // particles gated behind this style only.
+        aurora(ctx, cx, cy, minDim, S) {
+            const baseCoreSize = minDim * 0.15;
+            const coreSize = baseCoreSize * S.scale;
+            const maxRadius = (minDim / 2) * 0.95;
+
+            // Aura fill (one gradient, full canvas)
+            const auraGrad = ctx.createRadialGradient(cx, cy, coreSize * 0.5, cx, cy, maxRadius);
+            auraGrad.addColorStop(0, `rgba(${S.r1},${S.g1},${S.b1},0.6)`);
+            auraGrad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = auraGrad;
+            ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+
+            // Particles
+            const scaleFactor = minDim / 100;
+            const speed = S.speedMult;
+            const remote = window.isRemoteSpeaking;
+            for (const p of particles) {
+                p.angle += p.speed * speed;
+                p.wobble += p.wobbleSpeed * speed;
+                let r = p.radius * scaleFactor * 0.8;
+                if (window.isUserSpeaking) r += 10 * scaleFactor;
+                if (remote) r += Math.sin(p.wobble) * 10 * scaleFactor;
+                if (window.isUserSpeaking && remote) r += Math.random() * 5 * scaleFactor;
+                const px = cx + Math.cos(p.angle) * r + Math.cos(p.wobble) * 5;
+                const py = cy + Math.sin(p.angle) * r + Math.sin(p.wobble) * 5;
+                ctx.beginPath();
+                ctx.arc(px, py, p.size * (remote ? 1.5 : 1), 0, Math.PI * 2);
+                ctx.fillStyle = S.particleColor;
+                ctx.fill();
+            }
+
+            // Core — NO shadowBlur (was the #1 GPU cost). A soft radial gradient
+            // reads as a glow at a fraction of the price.
+            const coreGrad = ctx.createRadialGradient(cx-coreSize*0.3, cy-coreSize*0.3, 0, cx, cy, coreSize);
+            coreGrad.addColorStop(0, '#ffffff');
+            coreGrad.addColorStop(0.2, `rgb(${S.r1},${S.g1},${S.b1})`);
+            coreGrad.addColorStop(1, `rgb(${S.r2},${S.g2},${S.b2})`);
+            ctx.beginPath();
+            ctx.arc(cx, cy, coreSize + Math.sin(S.breathe)*0.5, 0, Math.PI * 2);
+            ctx.fillStyle = coreGrad;
+            ctx.fill();
+        },
+
+        // 'minimal' — cheapest style. A single pulsing core, no particles, no
+        // full-canvas fill. Designed for gaming / low-end GPUs.
+        minimal(ctx, cx, cy, minDim, S) {
+            const baseCoreSize = minDim * 0.20;
+            const coreSize = baseCoreSize * S.scale;
+
+            // Soft halo via a single radial gradient (no shadowBlur).
+            const halo = ctx.createRadialGradient(cx, cy, coreSize * 0.4, cx, cy, coreSize * 2.2);
+            halo.addColorStop(0, `rgba(${S.r1},${S.g1},${S.b1},0.55)`);
+            halo.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = halo;
+            ctx.beginPath();
+            ctx.arc(cx, cy, coreSize * 2.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Solid bright core
+            const coreGrad = ctx.createRadialGradient(cx-coreSize*0.3, cy-coreSize*0.3, 0, cx, cy, coreSize);
+            coreGrad.addColorStop(0, '#ffffff');
+            coreGrad.addColorStop(1, `rgb(${S.r1},${S.g1},${S.b1})`);
+            ctx.beginPath();
+            ctx.arc(cx, cy, coreSize + Math.sin(S.breathe), 0, Math.PI * 2);
+            ctx.fillStyle = coreGrad;
+            ctx.fill();
+        },
+
+        // 'pulse' — concentric expanding rings. Ripples outward on activity.
+        pulse(ctx, cx, cy, minDim, S) {
+            const baseCoreSize = minDim * 0.10;
+            const ringCount = 4;
+            const maxR = (minDim / 2) * 0.9;
+            for (let i = 0; i < ringCount; i++) {
+                // Each ring phase-offset; rings expand outward over time.
+                const phase = (S.t / 900 + i / ringCount) % 1;
+                const r = baseCoreSize + phase * (maxR - baseCoreSize);
+                const alpha = (1 - phase) * 0.5 * S.scale;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(${S.r1},${S.g1},${S.b1},${alpha})`;
+                ctx.lineWidth = 2 * (1 - phase) + 0.5;
+                ctx.stroke();
+            }
+            // Glowing core
+            const coreGrad = ctx.createRadialGradient(cx-baseCoreSize*0.3, cy-baseCoreSize*0.3, 0, cx, cy, baseCoreSize * S.scale);
+            coreGrad.addColorStop(0, '#ffffff');
+            coreGrad.addColorStop(1, `rgb(${S.r1},${S.g1},${S.b1})`);
+            ctx.beginPath();
+            ctx.arc(cx, cy, baseCoreSize * S.scale, 0, Math.PI * 2);
+            ctx.fillStyle = coreGrad;
+            ctx.fill();
+        }
+    };
+
+    // =========================================================================
+    // FASE 1 (1c/1d): render loop with visibility pause + adaptive throttle.
+    // Idle (nobody speaking) runs at ~30fps; activity bumps back to 60fps.
+    // Two separate timer ids so cancel/clear always target the right queue.
+    // =========================================================================
+    let rafId = null;
+    let timeoutId = null;
+    const IDLE_FRAME_MS = 1000 / 30;  // 30fps idle
+
+    function frame(now) {
+        const target = resolveTarget();
+
+        // Smooth color/scale toward target
+        const k = 0.04;
+        currentR1 = lerp(currentR1, target.c1.r, k);
+        currentG1 = lerp(currentG1, target.c1.g, k);
+        currentB1 = lerp(currentB1, target.c1.b, k);
+        currentR2 = lerp(currentR2, target.c2.r, k);
+        currentG2 = lerp(currentG2, target.c2.g, k);
+        currentB2 = lerp(currentB2, target.c2.b, k);
+        currentScale = lerp(currentScale, target.scale, k * 1.5);
+        currentSpeedMult = lerp(currentSpeedMult, target.speedMult, 0.05);
 
         corePulse += 0.05;
         const breathe = Math.sin(corePulse) * 2;
-        const coreSize = baseCoreSize * currentScale;
 
-        const color1 = `rgb(${Math.round(currentR1)}, ${Math.round(currentG1)}, ${Math.round(currentB1)})`;
-        const color2 = `rgb(${Math.round(currentR2)}, ${Math.round(currentG2)}, ${Math.round(currentB2)})`;
+        const S = {
+            r1: Math.round(currentR1), g1: Math.round(currentG1), b1: Math.round(currentB1),
+            r2: Math.round(currentR2), g2: Math.round(currentG2), b2: Math.round(currentB2),
+            scale: currentScale, speedMult: currentSpeedMult,
+            particleColor: target.particleColor, breathe, t: now
+        };
 
-        // --- Dibujar Aura (Corregido el corte rectangular) ---
-        // El radio máximo del gradiente ahora es exactamente la mitad de minDim,
-        // lo que asegura que termine en opacidad 0 justo antes de tocar el borde de la ventana.
-        const maxRadius = (minDim / 2) * 0.95; 
-        
-        const auraGrad = ctx.createRadialGradient(cx, cy, coreSize * 0.5, cx, cy, maxRadius);
-        auraGrad.addColorStop(0, `rgba(${Math.round(currentR1)}, ${Math.round(currentG1)}, ${Math.round(currentB1)}, 0.6)`);
-        auraGrad.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = auraGrad;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const minDim = Math.min(window.innerWidth, window.innerHeight) * 0.65;
 
-        // --- Dibujar Partículas ---
-        const scaleFactor = minDim / 100;
-        particles.forEach(p => {
-            // Mover partículas suavemente
-            p.angle += p.speed * currentSpeedMult;
-            p.wobble += p.wobbleSpeed * currentSpeedMult;
-            
-            let currentRadius = p.radius * scaleFactor * 0.8;
-            if (userSpeaking) currentRadius += 10 * scaleFactor;
-            if (window.isRemoteSpeaking) currentRadius += Math.sin(p.wobble) * 10 * scaleFactor;
-            if (userSpeaking && window.isRemoteSpeaking) currentRadius += Math.random() * 5 * scaleFactor; // Tensión
+        ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+        STYLES[activeStyle](ctx, cx, cy, minDim, S);
 
-            const px = cx + Math.cos(p.angle) * currentRadius + Math.cos(p.wobble) * 5;
-            const py = cy + Math.sin(p.angle) * currentRadius + Math.sin(p.wobble) * 5;
-
-            ctx.beginPath();
-            ctx.arc(px, py, p.size * (window.isRemoteSpeaking ? 1.5 : 1), 0, Math.PI * 2);
-            ctx.fillStyle = pColor;
-            ctx.fill();
-        });
-
-        // --- Dibujar Núcleo ---
-        ctx.beginPath();
-        ctx.arc(cx, cy, coreSize + breathe*0.5, 0, Math.PI * 2);
-        const coreGrad = ctx.createRadialGradient(cx-coreSize*0.3, cy-coreSize*0.3, 0, cx, cy, coreSize);
-        coreGrad.addColorStop(0, '#ffffff');
-        coreGrad.addColorStop(0.2, color1);
-        coreGrad.addColorStop(1, color2);
-        ctx.fillStyle = coreGrad;
-        ctx.shadowBlur = window.isRemoteSpeaking ? 30 : 20;
-        ctx.shadowColor = color1;
-        ctx.fill();
+        // Adaptive throttle: idle schedules via setTimeout (no rAF wake-ups);
+        // active relies on the monitor's native vsync through requestAnimationFrame.
+        const idle = !window.isUserSpeaking && !window.isRemoteSpeaking && !window.isDisconnected;
+        if (idle) {
+            timeoutId = setTimeout(() => { timeoutId = null; rafId = requestAnimationFrame(frame); }, IDLE_FRAME_MS);
+        } else {
+            rafId = requestAnimationFrame(frame);
+        }
     }
 
-    render();
+    function startLoop() { if (!rafId && !timeoutId) rafId = requestAnimationFrame(frame); }
+    function stopLoop() {
+        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+    }
+
+    // FASE 1 (1c): pause rendering entirely when the window is hidden.
+    // In exclusive-fullscreen gaming the orb gets covered; this frees the GPU.
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stopLoop();
+        else startLoop();
+    });
+
+    // Apply the initial style injected by Rust (if any), then start rendering.
+    if (window.__AURARTC_ORB_STYLE__ && STYLES[window.__AURARTC_ORB_STYLE__]) {
+        activeStyle = window.__AURARTC_ORB_STYLE__;
+    }
+
+    startLoop();
   </script>
 </body>
 </html>

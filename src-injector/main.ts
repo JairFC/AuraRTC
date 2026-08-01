@@ -48,11 +48,12 @@ import { CallStatus } from "./domain/models/CallStatus";
 
     // 5b. Remote (incoming WebRTC) VAD — drives the orb's "remote speaking" state.
     // Site-agnostic: taps RTCPeerConnection inbound tracks + <audio>/<video>.
-    webrtc.onRemoteVoiceActivity(() => {
-        ipc.emit('remote-speaking', {});
+    // The payload carries the speaking track's color for multi-party tinting.
+    webrtc.onRemoteVoiceActivity((p) => {
+        ipc.emit('remote-speaking', p);
     });
-    webrtc.onRemoteSilence(() => {
-        ipc.emit('remote-silent', {});
+    webrtc.onRemoteSilence((p) => {
+        ipc.emit('remote-silent', p);
     });
     webrtc.hookRemoteAudio();
 

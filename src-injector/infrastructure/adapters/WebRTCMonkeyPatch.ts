@@ -28,8 +28,10 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     private userDetector: VoiceDetector | null = null;
 
     // --- Remote (incoming WebRTC audio) VAD ---
-    private onRemoteVoiceCallback: (() => void) | null = null;
-    private onRemoteSilenceCallback: (() => void) | null = null;
+    // Callbacks carry the speaking track's { id, color } so the orb can tint
+    // per-participant (multi-party coloring) instead of a single "remote" color.
+    private onRemoteVoiceCallback: ((p: { id: string; color: string }) => void) | null = null;
+    private onRemoteSilenceCallback: ((p: { id: string; color: string }) => void) | null = null;
     private remoteAnalysisInterval: number | null = null;
     private remoteDetectors: VoiceDetector[] = [];
     /** Media elements we already wired up, to avoid double-hooking. */
@@ -57,11 +59,11 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     }
 
     /** Mirror of the user VAD callbacks, for incoming (remote) audio. */
-    public onRemoteVoiceActivity(callback: () => void): void {
+    public onRemoteVoiceActivity(callback: (p: { id: string; color: string }) => void): void {
         this.onRemoteVoiceCallback = callback;
     }
 
-    public onRemoteSilence(callback: () => void): void {
+    public onRemoteSilence(callback: (p: { id: string; color: string }) => void): void {
         this.onRemoteSilenceCallback = callback;
     }
 
@@ -235,8 +237,8 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
                 pc.addEventListener('track', (e: RTCTrackEvent) => {
                     if (e.track && e.track.kind === 'audio') {
                         try {
-                            self.analyzeRemoteStream(new MediaStream([e.track]));
-                            console.log("[AuraRTC] Captured inbound WebRTC audio track.");
+                            self.analyzeRemoteStream(new MediaStream([e.track]), e.track.id);
+                            console.log(`[AuraRTC] Captured inbound WebRTC track ${e.track.id}.`);
                         } catch (err) {
                             console.warn("[AuraRTC] Could not analyze inbound track", err);
                         }
@@ -266,7 +268,9 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
             // site would go silent (the remote voice would stop being heard).
             const source = ctx.createMediaElementSource(el);
             source.connect(ctx.destination);
-            this.analyzeRemoteSource(source);
+            // Media elements have no track.id; use a synthetic stable id so each
+            // element still gets a consistent color across rescans.
+            this.analyzeRemoteSource(source, el.dataset.auraId || (el.dataset.auraId = 'media-' + Math.random().toString(36).slice(2, 8)));
             this.hookedMediaElements.add(el);
         } catch (e) {
             // Element may already be captured by a prior hook or be in a bad state.
@@ -274,27 +278,44 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
     }
 
     /** Shared analysis entry: MediaStream (from a PC track). */
-    private analyzeRemoteStream(stream: MediaStream): void {
+    private analyzeRemoteStream(stream: MediaStream, trackId: string): void {
         const ctx = this.getOrCreateAudioContext();
         const source = ctx.createMediaStreamSource(stream);
-        this.analyzeRemoteSource(source);
+        this.analyzeRemoteSource(source, trackId);
+    }
+
+    /**
+     * Stable color (hex) for a given track id. Deterministic hash → HSL hue,
+     * so the same remote participant keeps the same color across reconnections.
+     */
+    private colorForTrack(trackId: string): string {
+        let h = 0;
+        for (let i = 0; i < trackId.length; i++) h = (h * 31 + trackId.charCodeAt(i)) >>> 0;
+        const hue = h % 360;
+        // vivid, high-saturation color that reads well on the orb
+        return hslToHex(hue, 90, 60);
     }
 
     /** Shared analysis entry: any AudioNode (stream or media-element source). */
-    private analyzeRemoteSource(source: AudioNode): void {
+    private analyzeRemoteSource(source: AudioNode, trackId: string): void {
         const ctx = this.getOrCreateAudioContext();
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
         source.connect(analyser);
 
+        const color = this.colorForTrack(trackId);
         const detector: VoiceDetector = {
             isSpeaking: false,
             noiseFloor: 2, // remote audio is decoded, so it sits very low when idle
             speakingCounter: 0,
             analyser,
             dataArray: new Uint8Array(analyser.frequencyBinCount),
-            onSpeak: () => { if (this.onRemoteVoiceCallback) this.onRemoteVoiceCallback(); },
-            onSilent: () => { if (this.onRemoteSilenceCallback) this.onRemoteSilenceCallback(); },
+            onSpeak: () => {
+                if (this.onRemoteVoiceCallback) this.onRemoteVoiceCallback({ id: trackId, color });
+            },
+            onSilent: () => {
+                if (this.onRemoteSilenceCallback) this.onRemoteSilenceCallback({ id: trackId, color });
+            },
         };
         this.remoteDetectors.push(detector);
 
@@ -305,4 +326,16 @@ export class WebRTCMonkeyPatch implements IAudioAnalyzer {
             for (const d of this.remoteDetectors) this.sampleDetector(d);
         }, this.vadConfig.analysis_interval_ms);
     }
+}
+
+/** HSL → "#RRGGBB" helper for stable per-track coloring. */
+function hslToHex(h: number, s: number, l: number): string {
+    s /= 100; l /= 100;
+    const k = (n: number) => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = (n: number) => {
+        const c = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+        return Math.round(255 * c).toString(16).padStart(2, '0');
+    };
+    return `#${f(0)}${f(8)}${f(4)}`;
 }

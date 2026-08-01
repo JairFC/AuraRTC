@@ -264,6 +264,19 @@
         <span class="slider"></span>
       </label>
     </div>
+
+    <!-- Orb visual style -->
+    <div class="row" style="align-items:center; justify-content:space-between; gap:12px;">
+      <div>
+        <div class="toggle-label">Orb Style</div>
+        <div class="toggle-desc">Visual style of the floating orb (applies instantly)</div>
+      </div>
+      <select id="orbStyle" style="background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:13px;">
+        <option value="aurora">Aurora (particles)</option>
+        <option value="minimal">Minimal (low GPU)</option>
+        <option value="pulse">Pulse (rings)</option>
+      </select>
+    </div>
   </div>
 
   <!-- DOM Selectors -->
@@ -330,6 +343,7 @@
       siteName: document.getElementById('siteName'),
       targetUrl: document.getElementById('targetUrl'),
       autoCall: document.getElementById('autoCall'),
+      orbStyle: document.getElementById('orbStyle'),
       selBot: document.getElementById('selBot'),
       selHangup: document.getElementById('selHangup'),
       selDismiss: document.getElementById('selDismiss'),
@@ -354,6 +368,7 @@
         el.siteName.value = config.site_name || '';
         el.targetUrl.value = config.target_url || '';
         el.autoCall.checked = config.auto_call_enabled || false;
+        el.orbStyle.value = config.orb_style || 'aurora';
         el.selBot.value = arrToText(config.selectors?.bot);
         el.selHangup.value = arrToText(config.selectors?.hangup);
         el.selDismiss.value = arrToText(config.selectors?.dismiss);
@@ -402,6 +417,7 @@
         site_name: el.siteName.value || 'My Voice App',
         target_url: el.targetUrl.value || 'https://example.com',
         auto_call_enabled: el.autoCall.checked,
+        orb_style: el.orbStyle.value || 'aurora',
         selectors: {
           bot: textToArr(el.selBot.value),
           hangup: textToArr(el.selHangup.value),
@@ -438,6 +454,18 @@
     document.getElementById('btnSaveOnly').addEventListener('click', saveOnly);
     document.getElementById('btnReload') && document.getElementById('btnReload').addEventListener('click', loadConfig);
     document.getElementById('btnOpenFile').addEventListener('click', openConfigFile);
+
+    // Orb style: apply instantly via event (no window reload needed).
+    el.orbStyle.addEventListener('change', () => {
+        const style = el.orbStyle.value;
+        try {
+            window.__TAURI__.event.emit('orb-style-changed', style)
+                .catch(e => console.error('style emit failed', e));
+            showStatus('✅ Orb style: ' + style, 'success');
+        } catch (e) {
+            showStatus('Could not apply style: ' + e, 'error');
+        }
+    });
 
     // Load on start
     loadConfig();

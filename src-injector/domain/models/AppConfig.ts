@@ -21,6 +21,7 @@ export interface AppConfig {
     auto_call_enabled: boolean;
     selectors: SelectorConfig;
     vad: VadConfig;
+    orb_style: string;
 }
 
 /** Returns a safe empty config with generic defaults (no site-specific values). */
@@ -40,5 +41,6 @@ export function emptyConfig(): AppConfig {
             speaking_offset: 10.0,
             analysis_interval_ms: 30,
         },
+        orb_style: "aurora",
     };
 }

@@ -55,11 +55,21 @@ pub fn run() {
             });
 
             // Remote (incoming WebRTC audio) VAD bridge → orb animation.
+            // Payload carries the speaking track's hex color for per-participant tinting.
             let app_remote_speaking = app.handle().clone();
-            app.listen_any("remote-speaking", move |_| {
-                println!("[AuraRTC] event: remote-speaking");
+            app.listen_any("remote-speaking", move |event| {
+                let payload = event.payload();
+                println!("[AuraRTC] event: remote-speaking {}", payload);
+                // Extract the hex color from {"id":...,"color":"#RRGGBB"}; default purple.
+                let color = serde_json::from_str::<serde_json::Value>(payload)
+                    .ok()
+                    .and_then(|v| v.get("color").and_then(|c| c.as_str()).map(|s| s.to_string()))
+                    .unwrap_or_else(|| "#FF00FF".to_string());
                 if let Some(orb) = app_remote_speaking.get_webview_window("orb") {
-                    let _ = orb.eval("window.isRemoteSpeaking = true;");
+                    let _ = orb.eval(format!(
+                        "window.remoteColor = {:?}; window.isRemoteSpeaking = true;",
+                        color
+                    ));
                 }
             });
 
@@ -87,6 +97,20 @@ pub fn run() {
                 }
             });
 
+            // 4b. Orb style bridge — switches the active visual style at runtime.
+            // The settings UI emits "orb-style-changed" with the style name; we
+            // forward it to the orb window via window.setOrbStyle().
+            let app_style = app.handle().clone();
+            app.listen_any("orb-style-changed", move |event| {
+                let payload_str = event.payload();
+                // payload comes as a JSON-quoted string ("\"minimal\""); strip quotes.
+                let style = payload_str.trim_matches('"');
+                println!("[AuraRTC] orb style -> {}", style);
+                if let Some(orb) = app_style.get_webview_window("orb") {
+                    let _ = orb.eval(format!("window.setOrbStyle({:?});", style));
+                }
+            });
+
             // 4. Build injector bundle with config injected at the front
             let init_script = build_init_script(&config);
 
@@ -106,6 +130,8 @@ pub fn run() {
             window.open_devtools();
 
             // 6. Instanciar el Orbe
+            // Inject the configured orb style so it applies on first paint.
+            let orb_init = format!("window.__AURARTC_ORB_STYLE__ = {:?};", config.orb_style);
             let _orb = WebviewWindowBuilder::new(
                 app,
                 "orb",
@@ -117,6 +143,7 @@ pub fn run() {
             .decorations(false)
             .shadow(false)
             .always_on_top(true)
+            .initialization_script(&orb_init)
             .build()?;
 
             // 7. Instanciar el Tray
