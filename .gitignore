@@ -43,3 +43,7 @@ src-tauri/src/settings.html
 
 # Internal agent/dev workflow config
 .agents/
+
+# User config — lives in AppData, never commit a local copy
+aurartc.json
+*.local
