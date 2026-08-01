@@ -1,189 +1,267 @@
+<div align="center">
+
 # 🔮 AuraRTC
 
-**A floating voice companion widget for any WebRTC-enabled web application.**
+**Voice-reactive overlay engine for the real-time web.**
 
-Built with Tauri v2, Rust, and TypeScript Clean Architecture.
+A floating orb that visualizes who's speaking on *any* WebRTC-enabled site —
+local mic, remote participant, and double-talk — without touching the site.
 
-> Status: **experimental / proof-of-concept.** The orb reacts to local + remote
-> voice activity on any WebRTC site. Tested against browser-based calling apps;
-> see [Tested sites](#-tested-sites--how-to-try-it). Not affiliated with any
-> service it overlays.
+`Tauri v2` · `Rust` · `TypeScript` · `Canvas 2D`
+
+[![Tauri](https://img.shields.io/badge/Tauri-v2-orange?logo=tauri&logoColor=white)](https://v2.tauri.app/)
+[![Rust](https://img.shields.io/badge/Rust-2021-red?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/status-experimental-orange)](#-status--limitations)
+
+</div>
+
+---
+
+```text
+          ┌──────────────────────────────────────────────┐
+          │                                              │
+          │    target site  ──▶  injector  ──▶  VAD      │
+          │         ▲                │             │     │
+          │         │                ▼             ▼     │
+          │      ORB UI  ◀──  rust core  ◀──  IPC events │
+          │         │                ▲                   │
+          │    always-on-top     system tray             │
+          │                     mic switching            │
+          │                                              │
+          └──────────────────────────────────────────────┘
+```
+
+AuraRTC opens the user-configured site in a Tauri WebView, injects a TypeScript
+bundle that taps WebRTC APIs (`getUserMedia`, `RTCPeerConnection`, `<audio>`/
+`<video>`), and bridges voice-activity events to a transparent always-on-top orb
+that animates in real time. All site-specific behavior is JSON-configured —
+zero hardcoding.
+
+> ⚠️ **Experimental / proof-of-concept.** See [Status & Limitations](#-status--limitations).
 
 ---
 
 ## ✨ Features
 
-- 🔮 **Floating Orb** — Real-time voice activity visualization with particle system
-- 🎙️ **Dynamic Microphone Switching** — Change mics on-the-fly from the system tray, no call interruption
-- 🤖 **Configurable Auto-Connect** — Automatically clicks "connect" buttons with customizable selectors
-- 🎯 **Site-Agnostic DOM Automation** — Works with any website via JSON-configured selectors
-- ⚙️ **Fully Configurable** — URL, selectors, VAD thresholds — everything lives in `aurartc.json`
-- 🧠 **Voice Activity Detection (VAD)** — WebRTC-based speech detection with tunable parameters
-- 📦 **Zero Dependencies Frontend** — Injector is a single IIFE bundle, no React/Vue/Angular
+- 🔮 **Reactive floating orb** — Canvas 2D particle system with smoothed color interpolation; reacts to local and remote voice in real time.
+- 🎙️ **Dynamic microphone switching** — change input device from the system tray mid-call, no reconnection.
+- 🤖 **Configurable auto-connect** — auto-clicks "join"/"connect" buttons via text-pattern selectors.
+- 🎯 **Site-agnostic by design** — point it at any WebRTC site via `aurartc.json`. No site-specific code paths.
+- 🧠 **Dual VAD engine** — adaptive noise-floor detection, shared between local-mic and remote-stream analysis.
+- ⚙️ **Hot-reload config** — save & apply recreates the main window without recompiling.
+- 🖥️ **System tray integration** — settings UI, mic selector, and toggles live in the tray.
+
+---
+
+## 🌈 Orb states
+
+The orb communicates call state purely through color:
+
+| State | Color | Hex | Trigger |
+|-------|-------|-----|---------|
+| 🟢 **Idle** | Green | `#00C864` | Silent / connected but nobody speaking |
+| 🔵 **You speaking** | Cyan | `#00FFFF` | Local microphone voice activity detected |
+| 🟣 **Remote speaking** | Purple | `#FF00FF` | Inbound WebRTC audio detected |
+| 🟡 **Double-talk** | Gold | `#FFD700` | Both local + remote active (interruption) |
+| 🔴 **Disconnected** | Red | `#FF4D4D` | Call ended / hangup detected |
 
 ---
 
 ## 🏗️ Architecture
 
-AuraRTC uses **Clean Architecture / Hexagonal Architecture** with a clear separation of concerns:
+Clean / hexagonal architecture with a strict separation between the injected
+frontend and the Rust desktop backend:
 
 ```text
-src-injector/                    # TypeScript — injected into target site
+src-injector/                    # TypeScript — injected into the target site
 ├── domain/
 │   ├── models/                  # AppConfig, CallStatus
-│   ├── ports/                   # IAudioAnalyzer, IDOMClicker, IIPCAdapter
-│   └── use_cases/               # (Business logic)
-├── infrastructure/
-│   └── adapters/                # WebRTCMonkeyPatch, DebouncedDOMObserver, TauriIPCAdapter
-└── main.ts                      # Composition Root
+│   └── ports/                   # IAudioAnalyzer, IDOMClicker, IIPCAdapter
+└── infrastructure/
+    └── adapters/
+        ├── WebRTCMonkeyPatch    # getUserMedia + RTCPeerConnection hooks, VAD
+        ├── DebouncedDOMObserver # MutationObserver-based auto-clicker
+        ├── MicManager           # device enumeration + tray mic selection
+        └── TauriIPCAdapter      # event emit/listen bridge
 
 src-tauri/src/                   # Rust — desktop backend
 ├── domain/
 │   ├── config.rs                # AuraConfig (JSON persistence)
 │   └── state.rs                 # AppState (mic management)
 ├── infrastructure/
-│   ├── ipc.rs                   # Tauri commands (logdom, resizeorb)
-│   └── tray.rs                  # System tray with dynamic mic selector
-└── lib.rs                       # Entry point
+│   ├── ipc.rs                   # Tauri commands + hot-reload
+│   └── tray.rs                  # system tray + dynamic mic submenu
+└── lib.rs                       # app entry + event bridge (injector → orb)
 ```
 
-### Data Flow
+### Data flow
 
 ```
-Target Website → WebRTC MonkeyPatch → VAD Analysis → IPC Events → Orb (Canvas 2D)
-                 DOM Observer → Auto-Click → Session Recovery
-                                                        ↕
-                                          System Tray ← Rust Backend → aurartc.json
+Target Website ──▶ WebRTC MonkeyPatch ──▶ VAD Analysis ──▶ IPC Events
+                       │                                         │
+                 DOM Observer                            Rust Backend
+                 (auto-click)                                 │
+                                                      ┌──────┴──────┐
+                                               Orb (Canvas)   System Tray
 ```
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Getting started
 
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+
 - [Rust](https://www.rust-lang.org/tools/install) 1.75+
-- [Tauri v2 Prerequisites](https://tauri.app/start/prerequisites/)
+- [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/)
 
-### Installation
+### Install & run
 
 ```bash
-git clone https://github.com/your-username/aurartc.git
-cd aurartc
+git clone https://github.com/JairFC/AuraRTC.git
+cd AuraRTC
 npm install
+npm run tauri dev
 ```
 
-### Configuration
+On first launch AuraRTC creates `aurartc.json` in your AppData directory. Edit it
+to point at your target site, or use the **Settings** window from the system tray.
 
-On first launch, AuraRTC creates `aurartc.json` in your AppData directory.
-Edit it to point to your target website:
+---
 
-```json
+## ⚙️ Configuration
+
+All behavior is driven by `aurartc.json` (persisted in AppData, never committed):
+
+```jsonc
 {
   "site_name": "My Voice App",
   "target_url": "https://your-voice-app.com",
   "auto_call_enabled": true,
   "selectors": {
-    "hangup": ["hang up", "end call", "disconnect"],
-    "bot": ["connect", "start", "call", "join"],
-    "dismiss": ["skip", "close", "not now"]
+    "hangup":  ["hang up", "end call", "disconnect"],
+    "bot":     ["connect", "start", "call", "join"],
+    "dismiss": ["skip", "close", "done", "not now"]
   },
   "vad": {
-    "noise_floor_max": 40.0,
-    "speaking_threshold": 12.0,
-    "speaking_offset": 10.0,
-    "analysis_interval_ms": 30
+    "noise_floor_max": 40.0,      // adaptive noise ceiling
+    "speaking_threshold": 12.0,   // min amplitude for speech
+    "speaking_offset": 10.0,      // sensitivity above noise floor
+    "analysis_interval_ms": 30    // VAD sample rate
   }
 }
 ```
 
 | Field | Description |
 |-------|-------------|
-| `site_name` | Display name shown in title bar and tray |
-| `target_url` | The WebRTC-enabled website to load |
-| `auto_call_enabled` | Auto-click "connect" buttons on page load |
-| `selectors.hangup` | Text patterns for "end call" buttons |
-| `selectors.bot` | Text patterns for "start call" / "connect" buttons |
-| `selectors.dismiss` | Text patterns for modals to auto-dismiss |
-| `vad.*` | Voice Activity Detection sensitivity tuning |
-
-### Development
-
-```bash
-npm run tauri dev
-```
-
-### Build
-
-```bash
-npm run tauri build
-```
-
----
-
-## 📜 How It Works
-
-1. **Tauri** opens a WebView pointing to `target_url`
-2. An **injector script** (TypeScript → IIFE bundle) is injected into the page
-3. The injector **monkey-patches** `navigator.mediaDevices.getUserMedia` to intercept audio streams
-4. **Voice Activity Detection** analyzes the audio in real-time using `AnalyserNode`
-5. **DOM Observer** watches for configurable button patterns and auto-clicks when needed
-6. **IPC Events** flow from the injector to the Rust backend and the floating Orb
-7. The **Orb** (a transparent always-on-top Canvas 2D window) visualizes voice activity with particles
+| `target_url` | HTTPS WebRTC-enabled site to overlay |
+| `auto_call_enabled` | Auto-click connect buttons on load |
+| `selectors.bot` | Text/aria-label patterns for "start call" buttons |
+| `selectors.hangup` | Patterns for "end call" (drives call state) |
+| `selectors.dismiss` | Patterns for modals to auto-dismiss |
+| `vad.*` | Voice Activity Detection tuning (shared local + remote) |
 
 ---
 
 ## 🧪 Tested sites & how to try it
 
-AuraRTC is site-agnostic: point `target_url` at any WebRTC-enabled page and it
-just works. Good places to validate the orb without setup:
+AuraRTC is site-agnostic. Good places to validate without setup:
 
-| Site | What it validates | Suggested `selectors.bot` |
-|------|-------------------|---------------------------|
-| [Mozilla gUM test page](https://mozilla.github.io/webrtc-landing/gum_test.html) | Local-mic VAD only (no call needed) | *(disable auto-call)* |
-| [Talky](https://talky.io) / [Whereby](https://whereby.com) | Full local **+ remote** VAD (open the same room in two tabs) | `join`, `enter room` |
+| Site | What it validates | `selectors.bot` |
+|------|-------------------|-----------------|
+| [Mozilla gUM test page](https://mozilla.github.io/webrtc-landing/gum_test.html) | Local-mic VAD (no call needed) | *(disable auto-call)* |
+| [Talky](https://talky.io) / [Whereby](https://whereby.com) | Local **+ remote** VAD | `join`, `enter room` |
 | Google Meet / Discord web | Real-world stress test | `join`, `enter voice` |
 
-**Fastest remote-voice test:** open a Talky room in AuraRTC's main window and in
-a second browser tab, then talk from the other tab — the orb should turn purple
-(remote speaking) and gold when both sides talk at once.
-
-### How the orb communicates state
-
-| Orb color | Meaning |
-|-----------|---------|
-| 🟢 Green | Idle / silent |
-| 🔵 Cyan | **You** are speaking |
-| 🟣 Purple | **Remote** participant is speaking |
-| 🟡 Gold | Both speaking at once (interruption) |
-| 🔴 Red | Disconnected |
+> **Fastest remote test:** open a Talky room in AuraRTC's main window and in a
+> second browser tab; speak from the other tab — the orb turns purple.
 
 ---
 
-## ⚠️ Limitations & notes
+## 🔧 How it works
 
-- **Permissions:** the target site must be served over HTTPS and grant
-  microphone access for VAD to engage.
-- **Auto-call** matches buttons by text/aria-label (configurable). Heavily
-  obfuscated SPAs may need custom `selectors.bot` entries.
-- **Remote VAD** taps `RTCPeerConnection` inbound tracks and `<audio>`/`<video>`
-  elements; media elements are re-routed to the audio destination so the site's
-  own playback is preserved.
-- **Single remote voice:** the orb currently treats all inbound audio as one
-  "remote" signal. Per-participant coloring is a future enhancement.
+1. **Tauri** opens a WebView at `target_url` and injects the bundle as an `initialization_script`.
+2. The injector **monkey-patches** `getUserMedia` (local mic) and `RTCPeerConnection` (remote tracks), and taps `<audio>`/`<video>` elements as a fallback.
+3. **Dual VAD** analyzes each source with an adaptive noise floor and emits `user-speaking` / `remote-speaking` / `connected` / `disconnected` events.
+4. **Rust** listens via `listen_any` and `eval`s state changes into the orb window.
+5. The **orb** interpolates color/scale smoothly each frame via `requestAnimationFrame`.
+
+---
+
+## 📜 How It Works — Deep Dive
+
+<details>
+<summary><b>The remote-voice detection problem</b></summary>
+
+The local microphone is easy — `getUserMedia` hands us the stream. But the
+*remote* participant's voice arrives as an inbound WebRTC track that the browser
+pipes into an `<audio>` element. AuraRTC captures it via two redundant paths:
+
+- **`RTCPeerConnection` `track` event** — the canonical WebRTC inbound path.
+  Works on any standards-compliant site.
+- **Media element tap** — `createMediaElementSource()` on every `<audio>`/`<video>`,
+  re-routed back to `destination` so the site's own playback is preserved
+  (without this, the site would go silent).
+
+Both feed the same adaptive VAD engine — no duplicated logic, no site-specific
+thresholds.
+</details>
+
+<details>
+<summary><b>Why the injector must wait for <code>document.body</code></b></summary>
+
+Tauri's `initialization_script` runs *before* the page constructs its DOM. If the
+injector calls `MutationObserver.observe(document.body, …)` at that point,
+`document.body` is `null` and the call throws — killing the entire watchdog,
+auto-call, and (indirectly) the orb pipeline. AuraRTC polls until `body` exists
+before observing.
+</details>
+
+---
+
+## ⚠️ Status & limitations
+
+- **Experimental** — built as a proof-of-concept; not production-hardened.
+- **Web only** — AuraRTC overlays WebView pages. Native apps (Zoom desktop,
+  Discord.exe, Spotify.exe) use OS audio APIs, not WebRTC — a different capture
+  layer (e.g. WASAPI loopback) would be needed.
+- **Single remote voice** — all inbound audio aggregates into one "remote"
+  signal today. Per-participant coloring via `track.id` is a planned enhancement.
+- **HTTPS required** — browsers only grant `getUserMedia` on secure origins.
 
 ---
 
 ## 🛡️ Security
 
-- **Capabilities**: Remote IPC is scoped to `https://*/*` — only the configured `target_url` is loaded
-- **No data exfiltration**: AuraRTC never sends data to external servers
-- **Local-only config**: All settings persist locally in `aurartc.json`
-- **Open source**: Full audit trail of all IPC commands and event handlers
+- **Scoped remote IPC** — capabilities limit remote-origin API access to the configured window.
+- **No telemetry** — AuraRTC never phones home; all config is local.
+- **Auditable** — the injected bundle is plain JS, readable in `src-injector/`.
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] Per-participant orb coloring via WebRTC `track.id`
+- [ ] Speaker labeling (config-driven name mapping)
+- [ ] Native audio loopback mode (WASAPI) for desktop apps
+- [ ] Built-in local STT (Whisper.cpp) call transcription
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome. Please open an issue first to discuss changes.
+
+```bash
+npm run typecheck   # tsc on src-injector
+npm run build       # build injector bundle + dist
+npm run tauri dev   # run the app
+```
 
 ---
 
 ## 📄 License
 
-MIT
+[MIT](LICENSE) © AuraRTC contributors
